@@ -34,6 +34,7 @@ import {
 } from '../engine/homeData';
 import { Product } from '../store/store';
 import { useStore } from '../store/StoreContext';
+import { publicAsset } from '../utils/assetUrl';
 
 interface HomePageProps {
   onNavigate: (r: RouteId) => void;
@@ -161,7 +162,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               className="flex items-center gap-2.5 shrink-0 cursor-pointer focus:outline-none"
             >
               <img
-                src="/assets/aistudio/logo_0620d144.svg"
+                src={publicAsset('assets/aistudio/logo_0620d144.svg')}
                 alt="FactoryMind"
                 className="h-7 w-7 rounded-md shrink-0"
               />
@@ -647,7 +648,7 @@ export const HomePage: React.FC<HomePageProps> = ({
         <div className="max-w-[1320px] mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-8 pb-10 border-b border-slate-200 dark:border-[#18261f]">
           <div className="lg:col-span-5 space-y-4">
             <div className="flex items-center gap-2.5">
-              <img src="/assets/aistudio/logo_0620d144.svg" alt="FactoryMind" className="h-7 w-7 rounded-md" />
+              <img src={publicAsset('assets/aistudio/logo_0620d144.svg')} alt="FactoryMind" className="h-7 w-7 rounded-md" />
               <span className="text-base font-bold tracking-tight text-slate-950 dark:text-white">
                 FactoryMind
               </span>

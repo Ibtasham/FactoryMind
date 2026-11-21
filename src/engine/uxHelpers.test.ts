@@ -222,3 +222,16 @@ test('homeData computes exact live plant metrics and exports 8 valid capability 
   assert.equal(emptyWidget.recentAlerts.length, 0);
   assert.equal(emptyWidget.latestMove, null);
 });
+
+test('publicAsset resolves root and GitHub Pages subpath asset URLs cleanly', async () => {
+  const { publicAsset } = await import('../utils/assetUrl');
+  assert.equal(publicAsset('/assets/aistudio/logo_0620d144.svg', '/'), '/assets/aistudio/logo_0620d144.svg');
+  assert.equal(
+    publicAsset('/assets/aistudio/logo_0620d144.svg', '/FactoryMind/'),
+    '/FactoryMind/assets/aistudio/logo_0620d144.svg'
+  );
+  assert.equal(
+    publicAsset('assets/aistudio/logo_0620d144.svg', '/my-repo'),
+    '/my-repo/assets/aistudio/logo_0620d144.svg'
+  );
+});

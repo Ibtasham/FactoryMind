@@ -102,9 +102,10 @@ export const DecisionAssistantPanel: React.FC<{
   useEffect(() => {
     let cancelled = false;
     setStatusLoading(true);
-    fetch('/api/assistant/status')
+    fetch(`${import.meta.env.BASE_URL}api/assistant/status`)
       .then(async (res) => {
-        if (!res.ok) throw new Error(`Status ${res.status}`);
+        const ct = res.headers.get('content-type') || '';
+        if (!res.ok || !ct.includes('application/json')) throw new Error(`Status ${res.status}`);
         return (await res.json()) as GeminiStatusPayload;
       })
       .then((data) => {
@@ -161,7 +162,7 @@ export const DecisionAssistantPanel: React.FC<{
       [resp.id]: { status: 'loading' },
     }));
     try {
-      const httpRes = await fetch('/api/assistant/explain', {
+      const httpRes = await fetch(`${import.meta.env.BASE_URL}api/assistant/explain`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -169,6 +170,18 @@ export const DecisionAssistantPanel: React.FC<{
           groundingDossier: resp.groundingDossier,
         }),
       });
+      const ct = httpRes.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) {
+        setAiByResponseId((prev) => ({
+          ...prev,
+          [resp.id]: {
+            status: 'unconfigured',
+            message:
+              'Static hosting detected (no /api/assistant backend). Deterministic FactoryMind outputs remain active and authoritative.',
+          },
+        }));
+        return;
+      }
       const payload = (await httpRes.json()) as {
         code?: string;
         error?: string;

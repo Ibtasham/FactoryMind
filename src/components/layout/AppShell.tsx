@@ -33,6 +33,7 @@ import {
 import { fmtInt, fmtMoney } from '../../engine/formatters';
 import { Product } from '../../store/store';
 import { useStore } from '../../store/StoreContext';
+import { publicAsset } from '../../utils/assetUrl';
 import { StatusLabel, ToastContainer } from '../ui/Primitives';
 
 export type RouteId =
@@ -216,7 +217,7 @@ export const AppShell: React.FC<{
           title="Return to FactoryMind Homepage"
           className="flex items-center gap-2.5 min-w-0 text-left hover:opacity-85 transition-opacity cursor-pointer"
         >
-          <img src="/assets/aistudio/logo_0620d144.svg" alt="FactoryMind logo" className="h-7 w-7 rounded shrink-0" />
+          <img src={publicAsset('assets/aistudio/logo_0620d144.svg')} alt="FactoryMind logo" className="h-7 w-7 rounded shrink-0" />
           <div className="min-w-0">
             <div className="text-sm font-bold tracking-tight text-slate-900 dark:text-white leading-none">
               FactoryMind

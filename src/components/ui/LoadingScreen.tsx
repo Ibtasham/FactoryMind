@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowRight } from 'lucide-react';
+import { publicAsset } from '../../utils/assetUrl';
 
 const BOOT_STEPS = [
   'Mounting 17-SKU catalogue & BOM hierarchy',
@@ -75,7 +76,7 @@ export const LoadingScreen: React.FC<{
         <div className="flex items-center gap-3.5">
           <div className="h-12 w-12 rounded-xl border border-slate-700/80 bg-slate-950 flex items-center justify-center p-2 shadow-sm shrink-0">
             <img
-              src="/assets/aistudio/logo_0620d144.svg"
+              src={publicAsset('assets/aistudio/logo_0620d144.svg')}
               alt="FactoryMind emblem"
               className="h-full w-full"
             />

@@ -4,8 +4,83 @@ import fs from 'fs';
 import path from 'path';
 import {defineConfig} from 'vite';
 
+function normalizeBasePath(raw?: string): string {
+  const trimmed = (raw || '').trim();
+  if (!trimmed || trimmed === '/') return '/';
+  const withLeading = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+  return withLeading.endsWith('/') ? withLeading : `${withLeading}/`;
+}
+
+function resolveBasePath(): string {
+  if (process.env.VITE_BASE_PATH) {
+    return normalizeBasePath(process.env.VITE_BASE_PATH);
+  }
+  const ghRepo = (process.env.GITHUB_REPOSITORY || '').trim();
+  if (ghRepo.includes('/')) {
+    const [owner, repo] = ghRepo.split('/');
+    if (repo && repo.toLowerCase() !== `${owner.toLowerCase()}.github.io`) {
+      return normalizeBasePath(repo);
+    }
+  }
+  return '/';
+}
+
+const VALID_SPA_ROUTES = [
+  'home',
+  'factory-sim',
+  'scenario-studio',
+  'decision-assistant',
+  'one-for-all',
+  'dashboard',
+  'advisor',
+  'inventory',
+  'eoq',
+  'abc',
+  'forecast',
+  'models-3d',
+  'production',
+  'decision-lab',
+  'line-balance',
+  'spc',
+  'research',
+  'ledger',
+  'brief',
+  'reports',
+  'settings',
+];
+
+function buildGitHubPages404Html(basePath: string): string {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Redirecting — FactoryMind</title>
+    <script>
+      (function () {
+        var base = ${JSON.stringify(basePath)};
+        var valid = ${JSON.stringify(VALID_SPA_ROUTES)};
+        var p = window.location.pathname || '/';
+        var rel = p.indexOf(base) === 0 ? p.slice(base.length) : p;
+        var seg = rel.replace(/^\\/+|\\/+$/g, '').split('/')[0] || '';
+        var route = valid.indexOf(seg) !== -1 ? seg : 'home';
+        var search = window.location.search || '';
+        var targetHash = window.location.hash && window.location.hash.length > 2
+          ? window.location.hash
+          : '#/' + route;
+        window.location.replace(base + search + targetHash);
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>
+`;
+}
+
 export default defineConfig(() => {
+  const base = resolveBasePath();
+
   return {
+    base,
     plugins: [
       react(),
       tailwindcss(),
@@ -24,6 +99,21 @@ export default defineConfig(() => {
           const distAssets = path.resolve(distDir, 'src/assets');
           if (fs.existsSync(distDir) && fs.existsSync(srcAssets)) {
             fs.cpSync(srcAssets, distAssets, {recursive: true, force: true});
+          }
+        },
+      },
+      // Emits GitHub Pages SPA 404 redirect & .nojekyll marker into dist/.
+      {
+        name: 'github-pages-spa-fallback',
+        apply: 'build',
+        closeBundle(error?: Error): void {
+          if (error) {
+            return;
+          }
+          const distDir = path.resolve(__dirname, 'dist');
+          if (fs.existsSync(distDir)) {
+            fs.writeFileSync(path.join(distDir, '404.html'), buildGitHubPages404Html(base), 'utf8');
+            fs.writeFileSync(path.join(distDir, '.nojekyll'), '', 'utf8');
           }
         },
       },
