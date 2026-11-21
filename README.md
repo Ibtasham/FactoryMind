@@ -1,11 +1,57 @@
-<div align="center">
+# FactoryMind — Industrial & Production Engineering Workbench
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+**Made by Md Ibtashamur Rahman**
 
-  <h1>Built with AI Studio</h2>
+FactoryMind is a browser-based Industrial & Production Engineering (IPE) decision-support platform built with **React 19, TypeScript, Vite, Tailwind CSS v4, Three.js, and jsPDF**. All mathematical engines execute purely in TypeScript with zero DOM coupling and are verified by automated unit tests (`node --test` via `tsx`).
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+---
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+## Core Engineering Modules
 
-</div>
+1. **Inventory Control & Policy (`src/engine/ipe.ts`, `src/engine/advisor.ts`)**
+   - Classical **Wilson EOQ**, finite-rate **EPQ**, and **Quantity Discount** price-break optimizer.
+   - **Reorder Point (ROP) & Safety Stock** with OLS-detrended residual demand variance (`dailyStats`) and fallback $\sigma$ tracking.
+   - **ABC / Pareto Classification**, working-capital **Portfolio Advisor**, and **Executive Brief** policy simulator.
+
+2. **Demand Forecasting & Predictive Smart Alerts (`src/engine/forecast.ts`, `src/engine/smartAlerts.ts`)**
+   - 12-model rolling-origin cross-validation suite: SMA, WMA, SES, Holt Linear, Additive/Multiplicative Holt-Winters, Seasonal Naive, Linear Trend, Croston, SBA, plus Naive and Mean baselines.
+   - Horizon-widened 95% prediction intervals and **Predictive Stockout Smart Alerts** synced across Dashboard, Header Bell Popover, and Store preferences.
+
+3. **Stochastic Simulation, Newsvendor & Queueing (`src/engine/inventory.ts`, `src/engine/prodsim.ts`)**
+   - **Monte Carlo $(Q, R)$ Inventory Simulator & Grid Optimizer** supporting multi-order pipeline concurrency, Normal/Poisson/Lognormal/Gamma/Constant demand, stochastic lead times, and high-CV Normal truncation warnings.
+   - **Discrete-Event Production Line Simulation (`simulateProductionLine`)** modeling serial workstations, finite inter-station buffers (blocking/starvation), MTBF/MTTR equipment downtime, bottleneck telemetry, and Little's Law ($L = \lambda W$) verification.
+   - **Single-Period Newsvendor** and analytical **Queueing Calculators** ($M/M/c$ Erlang-C, $M/M/c/K$ finite capacity, $M/G/1$ Pollaczek–Khinchine).
+
+4. **Multi-Level MRP, Line Balancing & SPC (`src/engine/mrp.ts`, `src/engine/linebal.ts`, `src/engine/ipe.ts`)**
+   - Low-level-coded multi-level **MRP explosion** with scheduled receipts (open POs), lot sizing (L4L, FOQ, EOQ, POQ), conservative ceiling lead-time offsetting, and shortage/late-release alerts.
+   - **Assembly Line Balancing** comparing 5 solvers (RPW, LCR, Kilbridge & Wester, COMSOAL, and Exact Branch & Bound) with shared workspace persistence.
+   - **Statistical Process Control (SPC)**: Shewhart $\bar{X}/R$ charts, Western Electric Rules 1–3, Phase I & Phase II (OOC-excluded) $C_p/C_{pk}/P_p/P_{pk}$, and exact finite-horizon EWMA & CUSUM drift charts.
+
+5. **Interactive 3D Digital Twin & Reports (`src/engine/threeModels.ts`, `src/engine/reports.ts`, `src/engine/pdfReport.ts`)**
+   - Code-split **Three.js WebGL 3D Studio** featuring articulated BOM assemblies with exploded view and a **Live Plant & Warehouse Twin** synced to catalog ROP status and DES line bottleneck/queue telemetry.
+   - Formula-injection-hardened **CSV**, **Markdown**, and **multi-page jsPDF** operations dossier exports.
+
+6. **Decision Intelligence Assistant & Optional Server-Side Gemini Explanation (`src/engine/decisionAssistant.ts`, `server.ts`)**
+   - Pure TypeScript natural-language decision engine backed by validated FactoryMind solvers (`advisor.ts`, `smartAlerts.ts`, `mrp.ts`, `desEngine.ts`, `scenarioStudio.ts`), supporting SKU risk diagnosis, material delay ranking, inventory investment optimization, bottleneck relief analysis, counterfactual what-if scenarios, policy comparisons, and DES explanations.
+   - Explicit **User Approval Gates** (field-by-field preview diffs) prevent unapproved mutations to stock balances, policy targets, or simulation settings.
+   - Optional server-side **Gemini (`gemini-4-hydrogen`)** narrative synthesis via `server.ts` (`/api/assistant/explain`), strictly grounded on the computed numerical dossier; operates seamlessly in deterministic-only mode whenever `GEMINI_API_KEY` is unconfigured.
+
+---
+
+## Development & Verification
+
+> **Note on Data Provenance**: The preloaded 17-SKU electromechanical catalog and synthetic demand series are illustrative engineering demo data designed for exploration and validation. Import your own CSV/JSON catalog in **Inventory** or **Settings** for live operational planning.
+
+```bash
+# Install dependencies
+npm install
+
+# Start full-stack Express + Vite server (port 3000)
+npm run dev
+
+# Run pure TypeScript engine & store test suite
+npm test
+
+# Type-check, static-check, run all unit/integration suites & build production bundle
+npm run verify
+```

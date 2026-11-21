@@ -1,0 +1,8 @@
+{
+  "name": "FactoryMind",
+  "description": "Smart inventory control, EOQ/EPQ, multi-level MRP, 12-model demand forecasting, stochastic (Q,R) & discrete-event production simulation, line balancing, 3D digital twin, and SPC quality workbench.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

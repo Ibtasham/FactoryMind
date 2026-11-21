@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="FactoryMind">
+  <title>FactoryMind</title>
+  <defs>
+    <linearGradient id="fm-badge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#059669"/>
+      <stop offset="55%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#047857"/>
+    </linearGradient>
+    <linearGradient id="fm-core" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0c1914"/>
+      <stop offset="100%" stop-color="#050b08"/>
+    </linearGradient>
+  </defs>
+  <!-- Precision rounded obsidian-emerald emblem -->
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#fm-badge)"/>
+  <rect x="26" y="26" width="460" height="460" rx="108" fill="none" stroke="#a7f3d0" stroke-opacity="0.32" stroke-width="6"/>
+
+  <!-- Dark isometric hexagon frame for crisp contrast at 24px–512px -->
+  <polygon points="256,72 414,164 414,348 256,440 98,348 98,164" fill="url(#fm-core)"/>
+  <polygon points="256,88 400,172 400,340 256,424 112,340 112,172" fill="none" stroke="#34d399" stroke-opacity="0.35" stroke-width="6"/>
+
+  <!-- Twin-bay sawtooth industrial silhouette -->
+  <path d="M148 340 V234 L220 272 V222 L292 260 V210 L364 248 V340 Z" fill="#ffffff"/>
+  <!-- Architectural bay apertures -->
+  <rect x="180" y="290" width="38" height="50" rx="6" fill="#07110d"/>
+  <rect x="237" y="290" width="38" height="50" rx="6" fill="#07110d"/>
+  <rect x="294" y="290" width="38" height="50" rx="6" fill="#07110d"/>
+
+  <!-- Mind / Telemetry node pulse above the plant roofline -->
+  <polyline points="172,196 226,166 286,184 342,148" fill="none" stroke="#34d399" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="226" cy="166" r="14" fill="#6ee7b7"/>
+  <circle cx="342" cy="148" r="18" fill="#a7f3d0"/>
+</svg>
