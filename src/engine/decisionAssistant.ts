@@ -1907,3 +1907,24 @@ function finalizeResponse(base: Omit<AssistantResponse, 'groundingDossier'>): As
     groundingDossier,
   };
 }
+
+export const STATIC_AI_UNAVAILABLE_NOTICE =
+  'AI narrative synthesis is unavailable on static hosting (GitHub Pages serves static files only and cannot execute Express/Node.js API routes or hold private Gemini API keys). Deterministic FactoryMind calculations, tables, reasoning traces, and approval previews remain active and authoritative.';
+
+export function isStaticHostingEnvironment(env: {
+  viteStaticOnly?: unknown;
+  hostname?: string;
+  protocol?: string;
+} = {}): boolean {
+  if (String(env.viteStaticOnly || '').toLowerCase() === 'true') {
+    return true;
+  }
+  const host = (env.hostname || '').trim().toLowerCase();
+  if (host.endsWith('.github.io')) {
+    return true;
+  }
+  if ((env.protocol || '').trim().toLowerCase() === 'file:') {
+    return true;
+  }
+  return false;
+}

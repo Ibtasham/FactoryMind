@@ -18,6 +18,29 @@ export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
 
+export function clampNumericInput(
+  raw: string | number,
+  fallback: number,
+  min: number,
+  max = Infinity,
+  round = false
+): number {
+  const n = typeof raw === 'number' ? raw : raw.trim() === '' ? NaN : Number(raw);
+  const base = Number.isFinite(n) ? n : fallback;
+  const clamped = Math.min(max, Math.max(min, base));
+  return round ? Math.round(clamped) : clamped;
+}
+
+export function escapeCsvCell(v: unknown): string {
+  const raw = String(v == null ? '' : v);
+  const safe = /^[\t\r ]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
+
+export function csvRow(cells: ReadonlyArray<unknown>): string {
+  return cells.map((c) => escapeCsvCell(c)).join(',');
+}
+
 export function fmtMoney(v: number | null | undefined, decimals = 2): string {
   if (v == null || !Number.isFinite(v)) return '—';
   const absVal = Math.abs(v);

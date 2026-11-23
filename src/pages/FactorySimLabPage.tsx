@@ -28,7 +28,6 @@ import {
 import {
   buildDesConfigFromFactorySim,
   DesExperimentPoint,
-  DesOrderSpec,
   runDesExperimentSuite,
   runDiscreteEventSimulation,
 } from '../engine/desEngine';
@@ -36,6 +35,7 @@ import {
   buildDefaultFactoryConfigFromWorkspace,
   estimateSpcQualityProfile,
   extractBomMaterialsForFactory,
+  FactoryDesPersistedOptions,
   FactorySimConfig,
   FactoryStationConfig,
   forecastDemandSignalForProduct,
@@ -47,7 +47,7 @@ import {
   SpcQualityProfileKey,
   stationsFromLineBalanceForFactory,
 } from '../engine/factorySim';
-import { fmtMoney, fmtNum } from '../engine/formatters';
+import { clampNumericInput, fmtMoney, fmtNum } from '../engine/formatters';
 import { ServiceDistType } from '../engine/prodsim';
 import { PlantRackProductInput, PlantStationInput } from '../engine/threeModels';
 import { AssemblySku, isAssemblySku } from '../engine/threeSpecs';
@@ -82,21 +82,26 @@ export const FactorySimLabPage: React.FC<{
   const [scenarioName, setScenarioName] = useState<string>('');
   const [scenarioNotes, setScenarioNotes] = useState<string>('');
 
-  // Priority-Queue DES Engine controls (Shift Calendar, Orders, Failure Distribution & Experimentation)
-  const [desDeterministic, setDesDeterministic] = useState<boolean>(false);
-  const [desEnableShifts, setDesEnableShifts] = useState<boolean>(true);
-  const [desWorkDaysPerWeek, setDesWorkDaysPerWeek] = useState<number>(5);
-  const [desShiftGapMin, setDesShiftGapMin] = useState<number>(15);
-  const [desFailureDist, setDesFailureDist] = useState<'weibull' | 'exponential' | 'lognormal'>('weibull');
-  const [desSecondaryRoute, setDesSecondaryRoute] = useState<boolean>(true);
-  const [desIncludeOpen, setDesIncludeOpen] = useState<boolean>(true);
-  const [desOrders, setDesOrders] = useState<DesOrderSpec[]>([
-    { id: 'PO-101', sku: factorySimConfig.assemblySku, routeId: `RT-${factorySimConfig.assemblySku}`, qty: 14, releaseAtMin: 0, dueAtMin: 480, priority: 1 },
-    { id: 'PO-102', sku: `${factorySimConfig.assemblySku}-V2`, routeId: `RT-${factorySimConfig.assemblySku}-VAR`, qty: 8, releaseAtMin: 120, dueAtMin: 720, priority: 2 },
-  ]);
   const [desExperiments, setDesExperiments] = useState<DesExperimentPoint[]>([]);
 
   const config = factorySimConfig;
+
+  const desOptions = useMemo<FactoryDesPersistedOptions>(() => {
+    if (config.desOptions) return config.desOptions;
+    return {
+      deterministic: false,
+      enableShifts: true,
+      workDaysPerWeek: 5,
+      shiftGapMin: 15,
+      failureDist: 'weibull',
+      secondaryRoute: true,
+      includeOpenArrivals: true,
+      orders: [
+        { id: 'PO-101', sku: config.assemblySku, routeId: `RT-${config.assemblySku}`, qty: 14, releaseAtMin: 0, dueAtMin: 480, priority: 1 },
+        { id: 'PO-102', sku: `${config.assemblySku}-V2`, routeId: `RT-${config.assemblySku}-VAR`, qty: 8, releaseAtMin: 120, dueAtMin: 720, priority: 2 },
+      ],
+    };
+  }, [config.desOptions, config.assemblySku]);
 
   useEffect(() => {
     if (selectedStationIdx >= config.stations.length) {
@@ -109,36 +114,45 @@ export const FactorySimLabPage: React.FC<{
   const desConfig = useMemo(() => {
     const primaryRouteId = `RT-${config.assemblySku}`;
     const varRouteId = `RT-${config.assemblySku}-VAR`;
-    const validOrders = desOrders.map((o) => ({
+    const validOrders = desOptions.orders.map((o) => ({
       ...o,
-      routeId: desSecondaryRoute && o.sku.endsWith('-V2') ? varRouteId : primaryRouteId,
+      routeId: desOptions.secondaryRoute && o.sku.endsWith('-V2') ? varRouteId : primaryRouteId,
     }));
     const baseDes = buildDesConfigFromFactorySim(config, {
-      enableShifts: desEnableShifts,
-      workingDaysPerWeek: desWorkDaysPerWeek,
-      interShiftGapMin: desShiftGapMin,
-      failureDistKind: desFailureDist,
-      customSecondaryRoute: desSecondaryRoute,
-      includeOpenArrivals: desIncludeOpen,
+      enableShifts: desOptions.enableShifts,
+      workingDaysPerWeek: desOptions.workDaysPerWeek,
+      interShiftGapMin: desOptions.shiftGapMin,
+      failureDistKind: desOptions.failureDist,
+      customSecondaryRoute: desOptions.secondaryRoute,
+      includeOpenArrivals: desOptions.includeOpenArrivals,
       orders: validOrders,
     });
-    return { ...baseDes, deterministic: desDeterministic };
-  }, [
-    config,
-    desDeterministic,
-    desEnableShifts,
-    desWorkDaysPerWeek,
-    desShiftGapMin,
-    desFailureDist,
-    desSecondaryRoute,
-    desIncludeOpen,
-    desOrders,
-  ]);
+    return { ...baseDes, deterministic: desOptions.deterministic };
+  }, [config, desOptions]);
 
   const desResult = useMemo(() => runDiscreteEventSimulation(desConfig), [desConfig]);
 
   const updateConfig = (updater: (prev: FactorySimConfig) => FactorySimConfig) => {
     setFactorySimConfig(updater(config));
+  };
+
+  const updateDesOptions = (updater: (prev: FactoryDesPersistedOptions) => FactoryDesPersistedOptions) => {
+    updateConfig((prev) => {
+      const current: FactoryDesPersistedOptions = prev.desOptions ?? {
+        deterministic: false,
+        enableShifts: true,
+        workDaysPerWeek: 5,
+        shiftGapMin: 15,
+        failureDist: 'weibull',
+        secondaryRoute: true,
+        includeOpenArrivals: true,
+        orders: [
+          { id: 'PO-101', sku: prev.assemblySku, routeId: `RT-${prev.assemblySku}`, qty: 14, releaseAtMin: 0, dueAtMin: 480, priority: 1 },
+          { id: 'PO-102', sku: `${prev.assemblySku}-V2`, routeId: `RT-${prev.assemblySku}-VAR`, qty: 8, releaseAtMin: 120, dueAtMin: 720, priority: 2 },
+        ],
+      };
+      return { ...prev, desOptions: updater(current) };
+    });
   };
 
   const updateStation = (idx: number, patch: Partial<FactoryStationConfig>) => {
@@ -166,13 +180,15 @@ export const FactorySimLabPage: React.FC<{
       materials: fresh.materials,
       enforceMaterialFlow: fresh.materials.length > 0,
       sourceNotes: fresh.sourceNotes,
+      desOptions: {
+        ...desOptions,
+        orders: desOptions.orders.map((o) => ({
+          ...o,
+          sku: o.sku.endsWith('-V2') ? `${fresh.assemblySku}-V2` : fresh.assemblySku,
+          routeId: o.sku.endsWith('-V2') ? `RT-${fresh.assemblySku}-VAR` : `RT-${fresh.assemblySku}`,
+        })),
+      },
     });
-    setDesOrders((prev) =>
-      prev.map((o) => ({
-        ...o,
-        sku: o.sku.endsWith('-V2') ? `${fresh.assemblySku}-V2` : fresh.assemblySku,
-      }))
-    );
     pushToast({ type: 'info', message: `Synced BOM & demand profile for ${fresh.assemblySku}.` });
   };
 
@@ -588,7 +604,7 @@ export const FactorySimLabPage: React.FC<{
                 onChange={(e) =>
                   updateConfig((p) => ({
                     ...p,
-                    replications: Math.max(1, Math.min(80, Math.round(Number(e.target.value) || 1))),
+                    replications: clampNumericInput(e.target.value, 1, 1, 80, true),
                   }))
                 }
               />
@@ -600,9 +616,10 @@ export const FactorySimLabPage: React.FC<{
               <div className="flex gap-1.5">
                 <Input
                   type="number"
+                  min={1}
                   value={config.seed}
                   onChange={(e) =>
-                    updateConfig((p) => ({ ...p, seed: Math.max(1, Math.round(Number(e.target.value) || 101)) }))
+                    updateConfig((p) => ({ ...p, seed: clampNumericInput(e.target.value, 101, 1, 2147483647, true) }))
                   }
                 />
                 <Button
@@ -775,12 +792,13 @@ export const FactorySimLabPage: React.FC<{
                   <Input
                     type="number"
                     min={0.2}
+                    max={500}
                     step={0.2}
                     value={config.arrivalRatePerHour}
                     onChange={(e) =>
                       updateConfig((p) => ({
                         ...p,
-                        arrivalRatePerHour: Math.max(0.1, Number(e.target.value) || 1),
+                        arrivalRatePerHour: clampNumericInput(e.target.value, 1, 0.1, 500),
                       }))
                     }
                   />
@@ -795,7 +813,7 @@ export const FactorySimLabPage: React.FC<{
                     onChange={(e) =>
                       updateConfig((p) => ({
                         ...p,
-                        arrivalCv: Math.max(0, Math.min(2, Number(e.target.value) || 0)),
+                        arrivalCv: clampNumericInput(e.target.value, 0, 0, 2),
                       }))
                     }
                   />
@@ -833,7 +851,7 @@ export const FactorySimLabPage: React.FC<{
                     onChange={(e) =>
                       updateConfig((p) => ({
                         ...p,
-                        defectRatePct: Math.max(0, Math.min(45, Number(e.target.value) || 0)),
+                        defectRatePct: clampNumericInput(e.target.value, 0, 0, 45),
                       }))
                     }
                   />
@@ -843,7 +861,10 @@ export const FactorySimLabPage: React.FC<{
                     disabled={config.routingMode !== 'rework-loop'}
                     value={config.reworkTargetStationIdx}
                     onChange={(e) =>
-                      updateConfig((p) => ({ ...p, reworkTargetStationIdx: Number(e.target.value) || 0 }))
+                      updateConfig((p) => ({
+                        ...p,
+                        reworkTargetStationIdx: clampNumericInput(e.target.value, 0, 0, Math.max(0, p.stations.length - 1), true),
+                      }))
                     }
                   >
                     {config.stations.map((s, idx) => (
@@ -862,7 +883,7 @@ export const FactorySimLabPage: React.FC<{
                     onChange={(e) =>
                       updateConfig((p) => ({
                         ...p,
-                        shiftsPerDay: Math.max(1, Math.min(3, Math.round(Number(e.target.value) || 1))),
+                        shiftsPerDay: clampNumericInput(e.target.value, 1, 1, 3, true),
                       }))
                     }
                   />
@@ -876,7 +897,7 @@ export const FactorySimLabPage: React.FC<{
                     onChange={(e) =>
                       updateConfig((p) => ({
                         ...p,
-                        shiftHours: Math.max(4, Math.min(12, Number(e.target.value) || 8)),
+                        shiftHours: clampNumericInput(e.target.value, 8, 4, 12),
                       }))
                     }
                   />
@@ -890,7 +911,7 @@ export const FactorySimLabPage: React.FC<{
                     onChange={(e) =>
                       updateConfig((p) => ({
                         ...p,
-                        daysToSimulate: Math.max(1, Math.min(30, Math.round(Number(e.target.value) || 1))),
+                        daysToSimulate: clampNumericInput(e.target.value, 1, 1, 30, true),
                       }))
                     }
                   />
@@ -904,7 +925,7 @@ export const FactorySimLabPage: React.FC<{
                     onChange={(e) =>
                       updateConfig((p) => ({
                         ...p,
-                        operatorsAvailable: Math.max(1, Math.round(Number(e.target.value) || 1)),
+                        operatorsAvailable: clampNumericInput(e.target.value, 1, 1, 100, true),
                       }))
                     }
                   />
@@ -980,11 +1001,12 @@ export const FactorySimLabPage: React.FC<{
                     <Input
                       type="number"
                       min={0.5}
+                      max={1000}
                       step={0.5}
                       value={selectedStation.meanTimeMin}
                       onChange={(e) =>
                         updateStation(selectedStationIdx, {
-                          meanTimeMin: Math.max(0.2, Number(e.target.value) || 0.5),
+                          meanTimeMin: clampNumericInput(e.target.value, 0.5, 0.2, 1000),
                         })
                       }
                     />
@@ -997,7 +1019,7 @@ export const FactorySimLabPage: React.FC<{
                       value={selectedStation.machineCount}
                       onChange={(e) =>
                         updateStation(selectedStationIdx, {
-                          machineCount: Math.max(1, Math.min(6, Math.round(Number(e.target.value) || 1))),
+                          machineCount: clampNumericInput(e.target.value, 1, 1, 6, true),
                         })
                       }
                     />
@@ -1010,7 +1032,7 @@ export const FactorySimLabPage: React.FC<{
                       value={selectedStation.bufferCapacity}
                       onChange={(e) =>
                         updateStation(selectedStationIdx, {
-                          bufferCapacity: Math.max(1, Math.min(50, Math.round(Number(e.target.value) || 1))),
+                          bufferCapacity: clampNumericInput(e.target.value, 1, 1, 50, true),
                         })
                       }
                     />
@@ -1024,7 +1046,7 @@ export const FactorySimLabPage: React.FC<{
                       value={selectedStation.cv}
                       onChange={(e) =>
                         updateStation(selectedStationIdx, {
-                          cv: Math.max(0, Math.min(2, Number(e.target.value) || 0)),
+                          cv: clampNumericInput(e.target.value, 0, 0, 2),
                         })
                       }
                     />
@@ -1033,11 +1055,12 @@ export const FactorySimLabPage: React.FC<{
                     <Input
                       type="number"
                       min={0}
+                      max={500}
                       step={0.1}
                       value={selectedStation.setupTimeMin}
                       onChange={(e) =>
                         updateStation(selectedStationIdx, {
-                          setupTimeMin: Math.max(0, Number(e.target.value) || 0),
+                          setupTimeMin: clampNumericInput(e.target.value, 0, 0, 500),
                         })
                       }
                     />
@@ -1051,7 +1074,7 @@ export const FactorySimLabPage: React.FC<{
                       value={selectedStation.operatorsPerMachine}
                       onChange={(e) =>
                         updateStation(selectedStationIdx, {
-                          operatorsPerMachine: Math.max(0.5, Math.min(4, Number(e.target.value) || 1)),
+                          operatorsPerMachine: clampNumericInput(e.target.value, 1, 0.5, 4),
                         })
                       }
                     />
@@ -1060,10 +1083,11 @@ export const FactorySimLabPage: React.FC<{
                     <Input
                       type="number"
                       min={0}
+                      max={100000}
                       step={10}
                       value={selectedStation.mtbfMin}
                       onChange={(e) =>
-                        updateStation(selectedStationIdx, { mtbfMin: Math.max(0, Number(e.target.value) || 0) })
+                        updateStation(selectedStationIdx, { mtbfMin: clampNumericInput(e.target.value, 0, 0, 100000) })
                       }
                     />
                   </Field>
@@ -1071,10 +1095,11 @@ export const FactorySimLabPage: React.FC<{
                     <Input
                       type="number"
                       min={0}
+                      max={10000}
                       step={1}
                       value={selectedStation.mttrMin}
                       onChange={(e) =>
-                        updateStation(selectedStationIdx, { mttrMin: Math.max(0, Number(e.target.value) || 0) })
+                        updateStation(selectedStationIdx, { mttrMin: clampNumericInput(e.target.value, 0, 0, 10000) })
                       }
                     />
                   </Field>
@@ -1082,17 +1107,19 @@ export const FactorySimLabPage: React.FC<{
                     <Input
                       type="number"
                       min={0}
+                      max={100000}
                       step={30}
                       value={selectedStation.pmIntervalMin}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const nextInterval = clampNumericInput(e.target.value, 0, 0, 100000);
                         updateStation(selectedStationIdx, {
-                          pmIntervalMin: Math.max(0, Number(e.target.value) || 0),
+                          pmIntervalMin: nextInterval,
                           pmDurationMin:
-                            Number(e.target.value) > 0 && selectedStation.pmDurationMin <= 0
+                            nextInterval > 0 && selectedStation.pmDurationMin <= 0
                               ? 6
                               : selectedStation.pmDurationMin,
-                        })
-                      }
+                        });
+                      }}
                     />
                   </Field>
                 </div>
@@ -1207,8 +1234,8 @@ export const FactorySimLabPage: React.FC<{
                 <Field label="Simulation clock mode">
                   <Select
                     aria-label="DES simulation mode"
-                    value={desDeterministic ? 'det' : 'stoch'}
-                    onChange={(e) => setDesDeterministic(e.target.value === 'det')}
+                    value={desOptions.deterministic ? 'det' : 'stoch'}
+                    onChange={(e) => updateDesOptions((prev) => ({ ...prev, deterministic: e.target.value === 'det' }))}
                   >
                     <option value="stoch">Seeded Stochastic (MC)</option>
                     <option value="det">Deterministic Benchmark</option>
@@ -1217,8 +1244,13 @@ export const FactorySimLabPage: React.FC<{
                 <Field label="Failure distribution">
                   <Select
                     aria-label="DES failure distribution"
-                    value={desFailureDist}
-                    onChange={(e) => setDesFailureDist(e.target.value as 'weibull' | 'exponential' | 'lognormal')}
+                    value={desOptions.failureDist}
+                    onChange={(e) =>
+                      updateDesOptions((prev) => ({
+                        ...prev,
+                        failureDist: e.target.value as 'weibull' | 'exponential' | 'lognormal',
+                      }))
+                    }
                   >
                     <option value="weibull">Weibull (Wear-out k=1.6)</option>
                     <option value="exponential">Exponential (Memoryless)</option>
@@ -1230,8 +1262,13 @@ export const FactorySimLabPage: React.FC<{
                     type="number"
                     min={1}
                     max={7}
-                    value={desWorkDaysPerWeek}
-                    onChange={(e) => setDesWorkDaysPerWeek(Math.max(1, Math.min(7, Math.round(Number(e.target.value) || 5))))}
+                    value={desOptions.workDaysPerWeek}
+                    onChange={(e) =>
+                      updateDesOptions((prev) => ({
+                        ...prev,
+                        workDaysPerWeek: clampNumericInput(e.target.value, 5, 1, 7, true),
+                      }))
+                    }
                   />
                 </Field>
                 <Field label="Inter-shift gap (min)" hint="0–120">
@@ -1240,8 +1277,13 @@ export const FactorySimLabPage: React.FC<{
                     min={0}
                     max={120}
                     step={5}
-                    value={desShiftGapMin}
-                    onChange={(e) => setDesShiftGapMin(Math.max(0, Math.min(120, Math.round(Number(e.target.value) || 0))))}
+                    value={desOptions.shiftGapMin}
+                    onChange={(e) =>
+                      updateDesOptions((prev) => ({
+                        ...prev,
+                        shiftGapMin: clampNumericInput(e.target.value, 0, 0, 120, true),
+                      }))
+                    }
                   />
                 </Field>
               </div>
@@ -1250,8 +1292,8 @@ export const FactorySimLabPage: React.FC<{
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={desEnableShifts}
-                    onChange={(e) => setDesEnableShifts(e.target.checked)}
+                    checked={desOptions.enableShifts}
+                    onChange={(e) => updateDesOptions((prev) => ({ ...prev, enableShifts: e.target.checked }))}
                     className="rounded border-slate-300 accent-[var(--accent)]"
                   />
                   <span>Enforce shift calendar breaks &amp; off-shift pause/resume ({desResult.scheduledWorkingHours}h work / {desResult.calendarHours}h cal)</span>
@@ -1259,8 +1301,8 @@ export const FactorySimLabPage: React.FC<{
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={desSecondaryRoute}
-                    onChange={(e) => setDesSecondaryRoute(e.target.checked)}
+                    checked={desOptions.secondaryRoute}
+                    onChange={(e) => updateDesOptions((prev) => ({ ...prev, secondaryRoute: e.target.checked }))}
                     className="rounded border-slate-300 accent-[var(--accent)]"
                   />
                   <span>Enable multi-product non-linear V2 routing branch ({desConfig.routes.length} active routes)</span>
@@ -1268,8 +1310,8 @@ export const FactorySimLabPage: React.FC<{
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={desIncludeOpen}
-                    onChange={(e) => setDesIncludeOpen(e.target.checked)}
+                    checked={desOptions.includeOpenArrivals}
+                    onChange={(e) => updateDesOptions((prev) => ({ ...prev, includeOpenArrivals: e.target.checked }))}
                     className="rounded border-slate-300 accent-[var(--accent)]"
                   />
                   <span>Include continuous stochastic open arrivals ({config.arrivalRatePerHour}/hr) alongside scheduled orders</span>
@@ -1314,18 +1356,21 @@ export const FactorySimLabPage: React.FC<{
                   size="sm"
                   variant="secondary"
                   onClick={() =>
-                    setDesOrders((prev) => [
+                    updateDesOptions((prev) => ({
                       ...prev,
-                      {
-                        id: `PO-${101 + prev.length}`,
-                        sku: desSecondaryRoute && prev.length % 2 === 1 ? `${config.assemblySku}-V2` : config.assemblySku,
-                        routeId: `RT-${config.assemblySku}`,
-                        qty: 10,
-                        releaseAtMin: prev.length * 120,
-                        dueAtMin: prev.length * 120 + 480,
-                        priority: prev.length + 1,
-                      },
-                    ])
+                      orders: [
+                        ...prev.orders,
+                        {
+                          id: `PO-${101 + prev.orders.length}`,
+                          sku: prev.secondaryRoute && prev.orders.length % 2 === 1 ? `${config.assemblySku}-V2` : config.assemblySku,
+                          routeId: `RT-${config.assemblySku}`,
+                          qty: 10,
+                          releaseAtMin: prev.orders.length * 120,
+                          dueAtMin: prev.orders.length * 120 + 480,
+                          priority: prev.orders.length + 1,
+                        },
+                      ],
+                    }))
                   }
                 >
                   <Plus className="h-3.5 w-3.5" /> Add Order
@@ -1347,27 +1392,28 @@ export const FactorySimLabPage: React.FC<{
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80 font-mono tabular-nums">
-                    {desOrders.map((ord, oi) => {
+                    {desOptions.orders.map((ord, oi) => {
                       const tel = desResult.orders[oi];
                       return (
                         <tr key={`${ord.id}-${oi}`}>
                           <td className="py-1.5 pr-2 font-medium whitespace-nowrap text-slate-900 dark:text-slate-100">{ord.id}</td>
                           <td className="py-1.5 pr-2 min-w-[135px]">
                             <Select
-                              value={ord.sku.endsWith('-V2') && desSecondaryRoute ? 'V2' : 'MAIN'}
+                              value={ord.sku.endsWith('-V2') && desOptions.secondaryRoute ? 'V2' : 'MAIN'}
                               onChange={(e) => {
                                 const useV2 = e.target.value === 'V2';
-                                setDesOrders((prev) =>
-                                  prev.map((row, idx) =>
+                                updateDesOptions((prev) => ({
+                                  ...prev,
+                                  orders: prev.orders.map((row, idx) =>
                                     idx === oi
                                       ? { ...row, sku: useV2 ? `${config.assemblySku}-V2` : config.assemblySku }
                                       : row
-                                  )
-                                );
+                                  ),
+                                }));
                               }}
                             >
                               <option value="MAIN">{config.assemblySku} · Serial</option>
-                              {desSecondaryRoute && <option value="V2">{config.assemblySku}-V2 · Alt</option>}
+                              {desOptions.secondaryRoute && <option value="V2">{config.assemblySku}-V2 · Alt</option>}
                             </Select>
                           </td>
                           <td className="py-1.5 pr-2 w-16">
@@ -1378,8 +1424,11 @@ export const FactorySimLabPage: React.FC<{
                               className="text-right"
                               value={ord.qty}
                               onChange={(e) => {
-                                const v = Math.max(1, Math.min(200, Math.round(Number(e.target.value) || 1)));
-                                setDesOrders((prev) => prev.map((r, idx) => (idx === oi ? { ...r, qty: v } : r)));
+                                const v = clampNumericInput(e.target.value, 1, 1, 200, true);
+                                updateDesOptions((prev) => ({
+                                  ...prev,
+                                  orders: prev.orders.map((r, idx) => (idx === oi ? { ...r, qty: v } : r)),
+                                }));
                               }}
                             />
                           </td>
@@ -1387,12 +1436,16 @@ export const FactorySimLabPage: React.FC<{
                             <Input
                               type="number"
                               min={0}
+                              max={10000}
                               step={30}
                               className="text-right"
                               value={ord.releaseAtMin}
                               onChange={(e) => {
-                                const v = Math.max(0, Number(e.target.value) || 0);
-                                setDesOrders((prev) => prev.map((r, idx) => (idx === oi ? { ...r, releaseAtMin: v } : r)));
+                                const v = clampNumericInput(e.target.value, 0, 0, 10000);
+                                updateDesOptions((prev) => ({
+                                  ...prev,
+                                  orders: prev.orders.map((r, idx) => (idx === oi ? { ...r, releaseAtMin: v } : r)),
+                                }));
                               }}
                             />
                           </td>
@@ -1400,12 +1453,16 @@ export const FactorySimLabPage: React.FC<{
                             <Input
                               type="number"
                               min={60}
+                              max={20000}
                               step={60}
                               className="text-right"
                               value={ord.dueAtMin ?? 480}
                               onChange={(e) => {
-                                const v = Math.max(60, Number(e.target.value) || 480);
-                                setDesOrders((prev) => prev.map((r, idx) => (idx === oi ? { ...r, dueAtMin: v } : r)));
+                                const v = clampNumericInput(e.target.value, 480, 60, 20000);
+                                updateDesOptions((prev) => ({
+                                  ...prev,
+                                  orders: prev.orders.map((r, idx) => (idx === oi ? { ...r, dueAtMin: v } : r)),
+                                }));
                               }}
                             />
                           </td>
@@ -1416,11 +1473,16 @@ export const FactorySimLabPage: React.FC<{
                           <td className="py-1.5 text-right">
                             <div className="flex items-center justify-end gap-1.5">
                               <span>{tel ? `${fmtNum(tel.onTimePct, 0)}%` : '—'}</span>
-                              {desOrders.length > 1 && (
+                              {desOptions.orders.length > 1 && (
                                 <button
                                   type="button"
                                   aria-label={`Remove ${ord.id}`}
-                                  onClick={() => setDesOrders((prev) => prev.filter((_, idx) => idx !== oi))}
+                                  onClick={() =>
+                                    updateDesOptions((prev) => ({
+                                      ...prev,
+                                      orders: prev.orders.filter((_, idx) => idx !== oi),
+                                    }))
+                                  }
                                   className="p-1 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded cursor-pointer"
                                 >
                                   <Trash2 className="h-3 w-3" />
@@ -1629,11 +1691,12 @@ export const FactorySimLabPage: React.FC<{
                               <Input
                                 type="number"
                                 min={0}
+                                max={1000000}
                                 value={mat.initialStock}
                                 aria-label={`${mat.sku} initial stock`}
                                 className="text-right"
                                 onChange={(e) => {
-                                  const val = Math.max(0, Number(e.target.value) || 0);
+                                  const val = clampNumericInput(e.target.value, 0, 0, 1000000);
                                   updateConfig((p) => ({
                                     ...p,
                                     materials: p.materials.map((m, i) => (i === idx ? { ...m, initialStock: val } : m)),
@@ -1645,11 +1708,12 @@ export const FactorySimLabPage: React.FC<{
                               <Input
                                 type="number"
                                 min={0}
+                                max={1000000}
                                 value={mat.rop}
                                 aria-label={`${mat.sku} sandbox ROP`}
                                 className="text-right"
                                 onChange={(e) => {
-                                  const val = Math.max(0, Number(e.target.value) || 0);
+                                  const val = clampNumericInput(e.target.value, 0, 0, 1000000);
                                   updateConfig((p) => ({
                                     ...p,
                                     materials: p.materials.map((m, i) => (i === idx ? { ...m, rop: val } : m)),
@@ -1661,12 +1725,13 @@ export const FactorySimLabPage: React.FC<{
                               <Input
                                 type="number"
                                 min={0.5}
+                                max={365}
                                 step={0.5}
                                 value={mat.leadTimeDays}
                                 aria-label={`${mat.sku} lead time days`}
                                 className="text-right"
                                 onChange={(e) => {
-                                  const val = Math.max(0.5, Number(e.target.value) || 1);
+                                  const val = clampNumericInput(e.target.value, 1, 0.5, 365);
                                   updateConfig((p) => ({
                                     ...p,
                                     materials: p.materials.map((m, i) => (i === idx ? { ...m, leadTimeDays: val } : m)),

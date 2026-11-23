@@ -93,6 +93,7 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
           <Search className="h-3.5 w-3.5 text-slate-500 absolute left-3 top-2.5" />
           <input
             autoFocus
+            data-autofocus="true"
             value={cmdQuery}
             aria-label="Search modules, SKUs, scenarios and help"
             onChange={(e) => setCmdQuery(e.target.value)}

@@ -26,6 +26,7 @@ import {
   PartUserData,
   PlantRackProductInput,
   PlantStationInput,
+  updatePlantFloorTwin,
 } from '../../engine/threeModels';
 import {
   ASSEMBLY_CAMERA_PRESETS,
@@ -845,6 +846,7 @@ export const Factory3DViewport: React.FC<Factory3DViewportProps> = ({
         container.removeChild(renderer.domElement);
       }
       sceneBundleRef.current = null;
+      prevBuildMetaRef.current = null;
     };
     // Intentionally mounted once per viewport lifecycle
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -858,11 +860,25 @@ export const Factory3DViewport: React.FC<Factory3DViewportProps> = ({
     b.requestRender();
   }, [theme]);
 
-  // Swap 3D model / plant floor geometry when mode, assemblySku, finish, or live twin state changes
+  // Swap or incrementally update 3D model / plant floor geometry when mode, assemblySku, finish, or live twin state changes
   const prevModeRef = useRef<SceneModeId>(mode);
+  const prevBuildMetaRef = useRef<{ mode: SceneModeId; finish: FinishPresetId } | null>(null);
   useEffect(() => {
     const b = sceneBundleRef.current;
     if (!b) return;
+
+    if (
+      mode === 'plant' &&
+      b.built &&
+      prevBuildMetaRef.current?.mode === 'plant' &&
+      prevBuildMetaRef.current?.finish === finish &&
+      updatePlantFloorTwin(b.built, plantProducts, plantStations)
+    ) {
+      b.applyHighlight();
+      b.rebuildRelationshipArcs();
+      b.requestRender();
+      return;
+    }
 
     if (b.built) {
       b.scene.remove(b.built.root);
@@ -876,6 +892,7 @@ export const Factory3DViewport: React.FC<Factory3DViewportProps> = ({
         : buildAssembly3D(assemblySku, finish);
 
     b.built = built;
+    prevBuildMetaRef.current = { mode, finish };
     b.scene.add(built.root);
     b.contactPlane.visible = mode === 'assembly';
     b.floorRing.visible = mode === 'assembly';

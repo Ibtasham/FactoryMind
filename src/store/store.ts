@@ -6,11 +6,12 @@
 
 import {
   buildDefaultFactoryConfigFromWorkspace,
+  FactoryDesPersistedOptions,
   FactoryScenarioRecord,
   FactorySimConfig,
   RoutingMode,
 } from '../engine/factorySim';
-import { clamp, num } from '../engine/formatters';
+import { clamp, escapeCsvCell, num } from '../engine/formatters';
 import { EoqResult, eoq, mulberry32, rop, STATUS_META, statusFor, StockStatus } from '../engine/ipe';
 import { getBenchmark, LineBalTaskInput } from '../engine/linebal';
 import { sanitizeScenarioParams, ScenarioDefinition } from '../engine/scenarioStudio';
@@ -407,6 +408,36 @@ function sanitizeFactorySimConfig(
       }))
     : [];
 
+  const rawDes = raw.desOptions;
+  let desOptions: FactoryDesPersistedOptions | undefined;
+  if (rawDes && typeof rawDes === 'object') {
+    const validFailureDist = new Set(['weibull', 'exponential', 'lognormal']);
+    const failureDist = validFailureDist.has(String(rawDes.failureDist))
+      ? (rawDes.failureDist as FactoryDesPersistedOptions['failureDist'])
+      : 'weibull';
+    const cleanOrders = Array.isArray(rawDes.orders)
+      ? rawDes.orders.slice(0, 30).map((o, idx) => ({
+          id: String(o?.id || `PO-${101 + idx}`),
+          sku: String(o?.sku || raw.assemblySku || 'ASM-PA100'),
+          routeId: String(o?.routeId || `RT-${raw.assemblySku || 'ASM-PA100'}`),
+          qty: clamp(Math.round(num(o?.qty, 10)), 1, 200),
+          releaseAtMin: Math.max(0, num(o?.releaseAtMin, 0)),
+          ...(o?.dueAtMin != null ? { dueAtMin: Math.max(60, num(o.dueAtMin, 480)) } : {}),
+          ...(o?.priority != null ? { priority: Math.max(1, Math.round(num(o.priority, idx + 1))) } : {}),
+        }))
+      : [];
+    desOptions = {
+      deterministic: Boolean(rawDes.deterministic),
+      enableShifts: rawDes.enableShifts !== false,
+      workDaysPerWeek: clamp(Math.round(num(rawDes.workDaysPerWeek, 5)), 1, 7),
+      shiftGapMin: clamp(Math.round(num(rawDes.shiftGapMin, 15)), 0, 120),
+      failureDist,
+      secondaryRoute: rawDes.secondaryRoute !== false,
+      includeOpenArrivals: rawDes.includeOpenArrivals !== false,
+      orders: cleanOrders,
+    };
+  }
+
   return {
     name: String(raw.name || 'Factory Simulation Experiment'),
     assemblySku: String(raw.assemblySku || products[0]?.sku || 'ASM-PA100'),
@@ -431,6 +462,7 @@ function sanitizeFactorySimConfig(
     enforceMaterialFlow: Boolean(raw.enforceMaterialFlow),
     stations,
     materials,
+    ...(desOptions ? { desOptions } : {}),
     sourceNotes: {
       demandOrigin: String(raw.sourceNotes?.demandOrigin || 'Synced workspace demand'),
       lineBalanceOrigin: String(raw.sourceNotes?.lineBalanceOrigin || lineBalance.benchmarkKey),
@@ -620,12 +652,7 @@ export function computeMetrics(p: Product): ProductMetrics {
 }
 
 export function toCSV(header: string[], rows: Array<Array<string | number>>): string {
-  const esc = (v: string | number | null | undefined) => {
-    const raw = String(v == null ? '' : v);
-    const safe = /^[\t\r ]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
-    return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-  };
-  return [header.map(esc).join(','), ...rows.map((r) => r.map(esc).join(','))].join('\r\n');
+  return [header.map(escapeCsvCell).join(','), ...rows.map((r) => r.map(escapeCsvCell).join(','))].join('\r\n');
 }
 
 export function parseCSV(text: string): string[][] {

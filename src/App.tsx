@@ -21,17 +21,19 @@ import {
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { LoadingScreen } from './components/ui/LoadingScreen';
 import { ModuleSkeleton, ToastContainer } from './components/ui/Primitives';
-import { AbcPage } from './pages/AbcPage';
-import { AdvisorPage } from './pages/AdvisorPage';
-import { DecisionAssistantPanel } from './components/assistant/DecisionAssistantPanel';
-import { BriefPage } from './pages/BriefPage';
-import { DashboardPage } from './pages/DashboardPage';
-import { EoqPage } from './pages/EoqPage';
-import { ForecastPage } from './pages/ForecastPage';
-import { HomePage } from './pages/HomePage';
-import { InventoryPage } from './pages/InventoryPage';
-import { LedgerPage } from './pages/LedgerPage';
-import { SettingsPage } from './pages/SettingsPage';
+const AbcPage = lazy(() => import('./pages/AbcPage').then((m) => ({ default: m.AbcPage })));
+const AdvisorPage = lazy(() => import('./pages/AdvisorPage').then((m) => ({ default: m.AdvisorPage })));
+const DecisionAssistantPanel = lazy(() =>
+  import('./components/assistant/DecisionAssistantPanel').then((m) => ({ default: m.DecisionAssistantPanel }))
+);
+const BriefPage = lazy(() => import('./pages/BriefPage').then((m) => ({ default: m.BriefPage })));
+const DashboardPage = lazy(() => import('./pages/DashboardPage').then((m) => ({ default: m.DashboardPage })));
+const EoqPage = lazy(() => import('./pages/EoqPage').then((m) => ({ default: m.EoqPage })));
+const ForecastPage = lazy(() => import('./pages/ForecastPage').then((m) => ({ default: m.ForecastPage })));
+const HomePage = lazy(() => import('./pages/HomePage').then((m) => ({ default: m.HomePage })));
+const InventoryPage = lazy(() => import('./pages/InventoryPage').then((m) => ({ default: m.InventoryPage })));
+const LedgerPage = lazy(() => import('./pages/LedgerPage').then((m) => ({ default: m.LedgerPage })));
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })));
 import { AssemblySku, isAssemblySku } from './engine/threeSpecs';
 import { Product } from './store/store';
 import { StoreProvider, useStore } from './store/StoreContext';
@@ -166,15 +168,17 @@ function WorkbenchRoot() {
 
       {route === 'home' ? (
         <>
-          <HomePage
-            onNavigate={navigate}
-            onAddProduct={openAdd}
-            onOpenProduct={(p) => setDetailProduct(p)}
-            onOpenCommandPalette={() => setCmdOpen(true)}
-            onOpenHelp={(topicId) => setHelpState({ open: true, topicId: topicId ?? null })}
-            onOpenOnboarding={() => setOnboardingOpen(true)}
-            onOpenHistory={() => setHistoryOpen(true)}
-          />
+          <Suspense fallback={<ModuleSkeleton label="Loading workbench…" />}>
+            <HomePage
+              onNavigate={navigate}
+              onAddProduct={openAdd}
+              onOpenProduct={(p) => setDetailProduct(p)}
+              onOpenCommandPalette={() => setCmdOpen(true)}
+              onOpenHelp={(topicId) => setHelpState({ open: true, topicId: topicId ?? null })}
+              onOpenOnboarding={() => setOnboardingOpen(true)}
+              onOpenHistory={() => setHistoryOpen(true)}
+            />
+          </Suspense>
           <ToastContainer toasts={toasts} onDismiss={dismissToast} />
         </>
       ) : (

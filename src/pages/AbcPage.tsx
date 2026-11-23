@@ -4,7 +4,7 @@ import { DonutChart, ParetoChart } from '../components/charts/Charts';
 import { Button, downloadFile, EmptyState, Panel, StatCard } from '../components/ui/Primitives';
 import { compactMoney, fmtInt, fmtMoney, fmtNum } from '../engine/formatters';
 import { ABC_ADVICE, abcAnalysis, abcSummary } from '../engine/ipe';
-import { Product } from '../store/store';
+import { Product, toCSV } from '../store/store';
 import { useStore } from '../store/StoreContext';
 
 export const AbcPage: React.FC<{ onOpenProduct: (p: Product) => void }> = ({ onOpenProduct }) => {
@@ -20,11 +20,20 @@ export const AbcPage: React.FC<{ onOpenProduct: (p: Product) => void }> = ({ onO
   const summary = useMemo(() => abcSummary(abcRows), [abcRows]);
 
   const exportAbcCsv = () => {
-    const header = 'Rank,SKU,Name,Category,Class,AnnualUsage,SharePct,CumPct';
-    const body = abcRows.map((r) =>
-      [r.rank, r.sku, `"${r.name.replace(/"/g, '""')}"`, r.category, r.cls, r.usage.toFixed(2), r.pct.toFixed(2), r.cumPct.toFixed(2)].join(',')
+    const csv = toCSV(
+      ['Rank', 'SKU', 'Name', 'Category', 'Class', 'AnnualUsage', 'SharePct', 'CumPct'],
+      abcRows.map((r) => [
+        r.rank,
+        r.sku,
+        r.name,
+        r.category,
+        r.cls,
+        r.usage.toFixed(2),
+        r.pct.toFixed(2),
+        r.cumPct.toFixed(2),
+      ])
     );
-    downloadFile('factorymind-abc-pareto.csv', [header, ...body].join('\n'), 'text/csv');
+    downloadFile('factorymind-abc-pareto.csv', csv, 'text/csv');
   };
 
   if (!products.length) {

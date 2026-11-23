@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { AlertTriangle, RefreshCw, Sparkles } from 'lucide-react';
 import { LineChart } from '../components/charts/Charts';
 import { AssumptionPanel, Button, Field, Input, Panel, SegmentedControl, Select, StatCard } from '../components/ui/Primitives';
-import { fmtInt, fmtMoney, fmtNum } from '../engine/formatters';
+import { clampNumericInput, fmtInt, fmtMoney, fmtNum } from '../engine/formatters';
 import {
   DemandDistributionInput,
   inventoryOptimizer,
@@ -260,10 +260,10 @@ export const DecisionLabPage: React.FC = () => {
           >
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
               <Field label="Order qty (Q)">
-                <Input type="number" min="1" value={Q} onChange={(e) => setQ(Number(e.target.value))} />
+                <Input type="number" min="1" max="1000000" value={Q} onChange={(e) => setQ(clampNumericInput(e.target.value, 1, 1, 1000000, true))} />
               </Field>
               <Field label="Reorder point (R)">
-                <Input type="number" min="0" value={R} onChange={(e) => setR(Number(e.target.value))} />
+                <Input type="number" min="0" max="1000000" value={R} onChange={(e) => setR(clampNumericInput(e.target.value, 0, 0, 1000000, true))} />
               </Field>
               <Field label="Demand distribution">
                 <Select value={dType} onChange={(e) => setDType(e.target.value as typeof dType)}>
@@ -275,10 +275,10 @@ export const DecisionLabPage: React.FC = () => {
                 </Select>
               </Field>
               <Field label="Daily demand μ">
-                <Input type="number" min="0.5" step="0.5" value={dMean} onChange={(e) => setDMean(Number(e.target.value))} />
+                <Input type="number" min="0.5" max="100000" step="0.5" value={dMean} onChange={(e) => setDMean(clampNumericInput(e.target.value, 12, 0.5, 100000))} />
               </Field>
               <Field label="Demand σ">
-                <Input type="number" min="0" step="0.5" value={dSd} onChange={(e) => setDSd(Number(e.target.value))} disabled={dType === 'poisson' || dType === 'constant'} />
+                <Input type="number" min="0" max="100000" step="0.5" value={dSd} onChange={(e) => setDSd(clampNumericInput(e.target.value, 0, 0, 100000))} disabled={dType === 'poisson' || dType === 'constant'} />
               </Field>
               <Field label="Lead-time model">
                 <Select value={ltType} onChange={(e) => setLtType(e.target.value as typeof ltType)}>
@@ -288,24 +288,24 @@ export const DecisionLabPage: React.FC = () => {
                 </Select>
               </Field>
               <Field label="Lead time μ (d)">
-                <Input type="number" min="0" value={ltMean} onChange={(e) => setLtMean(Number(e.target.value))} />
+                <Input type="number" min="0" max="365" value={ltMean} onChange={(e) => setLtMean(clampNumericInput(e.target.value, 0, 0, 365))} />
               </Field>
               <Field label="Lead time σ (d)">
-                <Input type="number" min="0" step="0.5" value={ltSd} onChange={(e) => setLtSd(Number(e.target.value))} disabled={ltType === 'deterministic'} />
+                <Input type="number" min="0" max="365" step="0.5" value={ltSd} onChange={(e) => setLtSd(clampNumericInput(e.target.value, 0, 0, 365))} disabled={ltType === 'deterministic'} />
               </Field>
               <Field label="Unit cost ($)">
-                <Input type="number" min="0.1" step="0.5" value={unitCost} onChange={(e) => setUnitCost(Number(e.target.value))} />
+                <Input type="number" min="0.1" max="1000000" step="0.5" value={unitCost} onChange={(e) => setUnitCost(clampNumericInput(e.target.value, 22, 0.1, 1000000))} />
               </Field>
               <Field label="Order cost ($)">
-                <Input type="number" min="0" value={orderCost} onChange={(e) => setOrderCost(Number(e.target.value))} />
+                <Input type="number" min="0" max="1000000" value={orderCost} onChange={(e) => setOrderCost(clampNumericInput(e.target.value, 0, 0, 1000000))} />
               </Field>
               <Field label="Shortage ($/day)">
-                <Input type="number" min="0" step="0.5" value={shortageCost} onChange={(e) => setShortageCost(Number(e.target.value))} />
+                <Input type="number" min="0" max="1000000" step="0.5" value={shortageCost} onChange={(e) => setShortageCost(clampNumericInput(e.target.value, 0, 0, 1000000))} />
               </Field>
               <Field label="Replications / Seed">
                 <div className="grid grid-cols-2 gap-1.5">
-                  <Input type="number" min="10" max="500" value={reps} onChange={(e) => setReps(Number(e.target.value))} />
-                  <Input type="number" min="1" value={seed} onChange={(e) => setSeed(Number(e.target.value))} />
+                  <Input type="number" min="10" max="500" value={reps} onChange={(e) => setReps(clampNumericInput(e.target.value, 10, 10, 500, true))} />
+                  <Input type="number" min="1" max="2147483647" value={seed} onChange={(e) => setSeed(clampNumericInput(e.target.value, 42, 1, 2147483647, true))} />
                 </div>
               </Field>
             </div>
@@ -409,19 +409,19 @@ export const DecisionLabPage: React.FC = () => {
           <Panel title="Single-period Newsvendor model" subtitle="Balances underage opportunity margin (p − c) against overage salvage loss (c − v)">
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               <Field label="Selling price ($)">
-                <Input type="number" min="0.1" step="0.5" value={nvPrice} onChange={(e) => setNvPrice(Number(e.target.value))} />
+                <Input type="number" min="0.1" max="1000000" step="0.5" value={nvPrice} onChange={(e) => setNvPrice(clampNumericInput(e.target.value, 45, 0.1, 1000000))} />
               </Field>
               <Field label="Unit cost ($)">
-                <Input type="number" min="0.1" step="0.5" value={nvCost} onChange={(e) => setNvCost(Number(e.target.value))} />
+                <Input type="number" min="0.1" max="1000000" step="0.5" value={nvCost} onChange={(e) => setNvCost(clampNumericInput(e.target.value, 22, 0.1, 1000000))} />
               </Field>
               <Field label="Salvage value ($)">
-                <Input type="number" min="0" step="0.5" value={nvSalvage} onChange={(e) => setNvSalvage(Number(e.target.value))} />
+                <Input type="number" min="0" max="1000000" step="0.5" value={nvSalvage} onChange={(e) => setNvSalvage(clampNumericInput(e.target.value, 0, 0, 1000000))} />
               </Field>
               <Field label="Mean demand μ">
-                <Input type="number" min="1" value={nvMean} onChange={(e) => setNvMean(Number(e.target.value))} />
+                <Input type="number" min="1" max="1000000" value={nvMean} onChange={(e) => setNvMean(clampNumericInput(e.target.value, 250, 1, 1000000))} />
               </Field>
               <Field label="Demand σ">
-                <Input type="number" min="0.5" value={nvSd} onChange={(e) => setNvSd(Number(e.target.value))} />
+                <Input type="number" min="0.5" max="1000000" value={nvSd} onChange={(e) => setNvSd(clampNumericInput(e.target.value, 55, 0.5, 1000000))} />
               </Field>
             </div>
           </Panel>
@@ -465,23 +465,23 @@ export const DecisionLabPage: React.FC = () => {
                 </Select>
               </Field>
               <Field label="Arrival rate λ (/hr)">
-                <Input type="number" min="0.1" step="0.5" value={qLambda} onChange={(e) => setQLambda(Number(e.target.value))} />
+                <Input type="number" min="0.1" max="10000" step="0.5" value={qLambda} onChange={(e) => setQLambda(clampNumericInput(e.target.value, 18, 0.1, 10000))} />
               </Field>
               <Field label="Service rate μ (/hr)">
-                <Input type="number" min="0.1" step="0.5" value={qMu} onChange={(e) => setQMu(Number(e.target.value))} />
+                <Input type="number" min="0.1" max="10000" step="0.5" value={qMu} onChange={(e) => setQMu(clampNumericInput(e.target.value, 8, 0.1, 10000))} />
               </Field>
               {qModel !== 'mg1' ? (
                 <Field label="Servers (c)">
-                  <Input type="number" min="1" max="50" value={qServers} onChange={(e) => setQServers(Math.max(1, Number(e.target.value) || 1))} />
+                  <Input type="number" min="1" max="50" value={qServers} onChange={(e) => setQServers(clampNumericInput(e.target.value, 1, 1, 50, true))} />
                 </Field>
               ) : (
                 <Field label="Service SCV²">
-                  <Input type="number" min="0" step="0.1" value={qScv2} onChange={(e) => setQScv2(Number(e.target.value))} />
+                  <Input type="number" min="0" max="20" step="0.1" value={qScv2} onChange={(e) => setQScv2(clampNumericInput(e.target.value, 0, 0, 20))} />
                 </Field>
               )}
               {qModel === 'mmck' && (
                 <Field label="System capacity (K)">
-                  <Input type="number" min={qServers} value={qCap} onChange={(e) => setQCap(Math.max(qServers, Number(e.target.value) || qServers))} />
+                  <Input type="number" min={qServers} max="500" value={qCap} onChange={(e) => setQCap(clampNumericInput(e.target.value, qServers, qServers, 500, true))} />
                 </Field>
               )}
             </div>
@@ -536,10 +536,10 @@ export const DecisionLabPage: React.FC = () => {
           >
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
               <Field label="Arrival rate (/hr)">
-                <Input type="number" min="0.5" step="0.2" value={desArrivalRate} onChange={(e) => setDesArrivalRate(Number(e.target.value))} />
+                <Input type="number" min="0.5" max="1000" step="0.2" value={desArrivalRate} onChange={(e) => setDesArrivalRate(clampNumericInput(e.target.value, 5.4, 0.5, 1000))} />
               </Field>
               <Field label="Arrival CV">
-                <Input type="number" min="0" max="2" step="0.1" value={desArrivalCv} onChange={(e) => setDesArrivalCv(Number(e.target.value))} />
+                <Input type="number" min="0" max="2" step="0.1" value={desArrivalCv} onChange={(e) => setDesArrivalCv(clampNumericInput(e.target.value, 0, 0, 2))} />
               </Field>
               <Field label="Service distribution">
                 <Select value={desServiceDist} onChange={(e) => setDesServiceDist(e.target.value as ServiceDistType)}>
@@ -557,29 +557,29 @@ export const DecisionLabPage: React.FC = () => {
                   step="0.02"
                   value={desServiceCv}
                   disabled={desServiceDist === 'constant' || desServiceDist === 'exponential'}
-                  onChange={(e) => setDesServiceCv(Number(e.target.value))}
+                  onChange={(e) => setDesServiceCv(clampNumericInput(e.target.value, 0, 0, 1.5))}
                 />
               </Field>
               <Field label="Inter-station buffer">
-                <Input type="number" min="0" max="50" value={desBufferCap} onChange={(e) => setDesBufferCap(Math.max(0, Number(e.target.value) || 0))} />
+                <Input type="number" min="0" max="50" value={desBufferCap} onChange={(e) => setDesBufferCap(clampNumericInput(e.target.value, 0, 0, 50, true))} />
               </Field>
               <Field label="Replications / Seed">
                 <div className="grid grid-cols-2 gap-1.5">
-                  <Input type="number" min="1" max="100" value={desReps} onChange={(e) => setDesReps(Number(e.target.value))} />
-                  <Input type="number" min="1" value={desSeed} onChange={(e) => setDesSeed(Number(e.target.value))} />
+                  <Input type="number" min="1" max="100" value={desReps} onChange={(e) => setDesReps(clampNumericInput(e.target.value, 1, 1, 100, true))} />
+                  <Input type="number" min="1" max="2147483647" value={desSeed} onChange={(e) => setDesSeed(clampNumericInput(e.target.value, 42, 1, 2147483647, true))} />
                 </div>
               </Field>
               <Field label="MTBF (min, 0=none)">
-                <Input type="number" min="0" step="10" value={desMtbf} onChange={(e) => setDesMtbf(Math.max(0, Number(e.target.value) || 0))} />
+                <Input type="number" min="0" max="100000" step="10" value={desMtbf} onChange={(e) => setDesMtbf(clampNumericInput(e.target.value, 0, 0, 100000))} />
               </Field>
               <Field label="MTTR (min)">
-                <Input type="number" min="0" step="1" value={desMttr} disabled={desMtbf <= 0} onChange={(e) => setDesMttr(Math.max(0, Number(e.target.value) || 0))} />
+                <Input type="number" min="0" max="10000" step="1" value={desMttr} disabled={desMtbf <= 0} onChange={(e) => setDesMttr(clampNumericInput(e.target.value, 0, 0, 10000))} />
               </Field>
               <Field label="Shift length (min)">
-                <Input type="number" min="60" max="4800" step="30" value={desShiftMin} onChange={(e) => setDesShiftMin(Number(e.target.value))} />
+                <Input type="number" min="60" max="4800" step="30" value={desShiftMin} onChange={(e) => setDesShiftMin(clampNumericInput(e.target.value, 480, 60, 4800, true))} />
               </Field>
               <Field label="Warmup (min)">
-                <Input type="number" min="0" max="600" step="15" value={desWarmupMin} onChange={(e) => setDesWarmupMin(Number(e.target.value))} />
+                <Input type="number" min="0" max="600" step="15" value={desWarmupMin} onChange={(e) => setDesWarmupMin(clampNumericInput(e.target.value, 0, 0, 600, true))} />
               </Field>
             </div>
           </Panel>

@@ -3,8 +3,16 @@ import { AlertTriangle, Factory, Plus, Trash2 } from 'lucide-react';
 import { BarChart } from '../components/charts/Charts';
 import { RouteId } from '../components/layout/AppShell';
 import { Button, Field, Input, Panel, Select, StatCard } from '../components/ui/Primitives';
-import { fmtNum } from '../engine/formatters';
-import { compareAlgorithms, getBenchmark, LineBalTaskInput, listBenchmarks, taskAllocationTable } from '../engine/linebal';
+import { clampNumericInput, fmtNum } from '../engine/formatters';
+import {
+  clampTaskDuration,
+  compareAlgorithms,
+  getBenchmark,
+  LineBalTaskInput,
+  listBenchmarks,
+  nextUniqueTaskId,
+  taskAllocationTable,
+} from '../engine/linebal';
 import { useStore } from '../store/StoreContext';
 
 export const LineBalancePage: React.FC<{ onNavigate?: (r: RouteId) => void }> = ({ onNavigate }) => {
@@ -54,7 +62,7 @@ export const LineBalancePage: React.FC<{ onNavigate?: (r: RouteId) => void }> = 
   const allocRows = useMemo(() => taskAllocationTable(activeSolution || null), [activeSolution]);
 
   const addTask = () => {
-    const nextId = `T${tasks.length + 1}`;
+    const nextId = nextUniqueTaskId(tasks);
     setTasks((prev) => [...prev, { id: nextId, name: `${nextId} – New task`, time: 2, successors: [] }]);
   };
 
@@ -90,12 +98,13 @@ export const LineBalancePage: React.FC<{ onNavigate?: (r: RouteId) => void }> = 
             <Input
               type="number"
               min="1"
+              max="1000"
               step="0.5"
               value={cycleTime}
               onChange={(e) =>
                 setLineBalance({
                   ...lineBalance,
-                  cycleTime: Math.max(1, Number(e.target.value) || 1),
+                  cycleTime: clampNumericInput(e.target.value, cycleTime, 1, 1000),
                 })
               }
             />
@@ -158,11 +167,12 @@ export const LineBalancePage: React.FC<{ onNavigate?: (r: RouteId) => void }> = 
                     <Input
                       type="number"
                       min="0.5"
+                      max="1000"
                       step="0.5"
                       value={t.time}
                       aria-label={`Task ${t.id} duration`}
                       onChange={(e) => {
-                        const v = Number(e.target.value);
+                        const v = clampTaskDuration(e.target.value, t.time);
                         setTasks((prev) => prev.map((x, i) => (i === idx ? { ...x, time: v } : x)));
                       }}
                     />

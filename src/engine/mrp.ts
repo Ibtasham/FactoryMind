@@ -3,6 +3,8 @@
  * Pure TypeScript, zero DOM dependencies.
  */
 
+import { csvRow, escapeCsvCell } from './formatters.ts';
+
 export type LotRule = 'l4l' | 'foq' | 'eoq' | 'poq';
 
 export interface BomLineInput {
@@ -886,35 +888,49 @@ export function mrpPlan({
 export function mrpToCSV(plan: MrpPlanResult): string {
   const lines: string[] = [];
   lines.push('FactoryMind MRP Export');
-  lines.push(`Root item: ${plan.rootId || ''}`);
-  lines.push(`Plan quantity: ${Number(plan.planQuantity) || 0}`);
-  lines.push(`Need date: ${plan.needDate ? plan.needDate.toISOString() : ''}`);
-  lines.push(`Start date: ${plan.startDate ? plan.startDate.toISOString() : ''}`);
-  lines.push(`Horizon (days): ${Number(plan.horizonDays) || 0}`);
-  lines.push(`Bucket size (days): ${Number(plan.bucketSizeDays) || 0}`);
-  lines.push(`Bucket count: ${Number(plan.bucketCount) || 0}`);
-  lines.push(`Valid: ${plan.valid ? 'yes' : 'no'}`);
-  lines.push(`Reason: ${plan.reason || ''}`);
+  lines.push(csvRow(['Root item', plan.rootId || '']));
+  lines.push(csvRow(['Plan quantity', Number(plan.planQuantity) || 0]));
+  lines.push(csvRow(['Need date', plan.needDate ? plan.needDate.toISOString() : '']));
+  lines.push(csvRow(['Start date', plan.startDate ? plan.startDate.toISOString() : '']));
+  lines.push(csvRow(['Horizon (days)', Number(plan.horizonDays) || 0]));
+  lines.push(csvRow(['Bucket size (days)', Number(plan.bucketSizeDays) || 0]));
+  lines.push(csvRow(['Bucket count', Number(plan.bucketCount) || 0]));
+  lines.push(csvRow(['Valid', plan.valid ? 'yes' : 'no']));
+  lines.push(csvRow(['Reason', escapeCsvCell(plan.reason || '')]));
   lines.push('');
 
   lines.push('Planned Order Releases');
-  lines.push('Component,Name,Bucket,Release Date,Quantity,Lead Time (days),Need Date,Lot Rule');
+  lines.push(csvRow(['Component', 'Name', 'Bucket', 'Release Date', 'Quantity', 'Lead Time (days)', 'Need Date', 'Lot Rule']));
   for (const r of plan.plannedOrderReleases || []) {
     const rd = r.releaseDate instanceof Date ? r.releaseDate.toISOString() : '';
     const nd = r.needDate instanceof Date ? r.needDate.toISOString() : '';
-    lines.push([r.componentId, r.componentName, r.bucketIndex, rd, r.quantity, r.leadTimeDays, nd, r.lotRule].join(','));
+    lines.push(csvRow([r.componentId, r.componentName, r.bucketIndex, rd, r.quantity, r.leadTimeDays, nd, r.lotRule]));
   }
   lines.push('');
 
   lines.push('Component Time-Phased Detail');
   lines.push(
-    'Component,Name,Level,On Hand,Safety Stock,Lead Time (days),Total Gross,Total Net Req,Total Planned Receipts,Total Planned Releases,Final Projected On Hand,Shortage,Lot Rule'
+    csvRow([
+      'Component',
+      'Name',
+      'Level',
+      'On Hand',
+      'Safety Stock',
+      'Lead Time (days)',
+      'Total Gross',
+      'Total Net Req',
+      'Total Planned Receipts',
+      'Total Planned Releases',
+      'Final Projected On Hand',
+      'Shortage',
+      'Lot Rule',
+    ])
   );
   for (const cid of Object.keys(plan.components || {})) {
     const c = plan.components[cid];
     if (!c) continue;
     lines.push(
-      [
+      csvRow([
         c.id,
         c.name,
         c.level,
@@ -928,8 +944,8 @@ export function mrpToCSV(plan: MrpPlanResult): string {
         c.finalProjectedOnHand,
         c.shortage ? 'yes' : 'no',
         c.lotRule,
-      ].join(',')
+      ])
     );
   }
-  return lines.join('\n');
+  return lines.join('\r\n');
 }

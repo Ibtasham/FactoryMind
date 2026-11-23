@@ -1126,3 +1126,26 @@ export function taskAllocationTable(solution: LineBalanceSolution | null) {
   }
   return rows;
 }
+
+export function nextUniqueTaskId(tasks: ReadonlyArray<Pick<LineBalTaskInput, 'id'>>): string {
+  const existing = new Set(tasks.map((t) => String(t.id || '').trim().toUpperCase()));
+  let maxNum = 0;
+  existing.forEach((id) => {
+    const m = /^T(\d+)$/.exec(id);
+    if (m) {
+      const n = Number(m[1]);
+      if (Number.isFinite(n) && n > maxNum) maxNum = n;
+    }
+  });
+  let candidateNum = Math.max(tasks.length + 1, maxNum + 1);
+  while (existing.has(`T${candidateNum}`)) {
+    candidateNum++;
+  }
+  return `T${candidateNum}`;
+}
+
+export function clampTaskDuration(v: number | string, fallback = 2): number {
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0.5, Math.min(1000, n));
+}

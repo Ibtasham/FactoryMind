@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { LineChart } from '../components/charts/Charts';
 import { AssumptionPanel, Button, Field, Input, Panel, SegmentedControl, Select, StatCard } from '../components/ui/Primitives';
-import { fmtInt, fmtMoney, fmtNum } from '../engine/formatters';
+import { clampNumericInput, fmtInt, fmtMoney, fmtNum } from '../engine/formatters';
 import { DiscountTierInput, eoq, epq, epqProfile, quantityDiscount, rop, totalCostAtQ } from '../engine/ipe';
 import { useStore } from '../store/StoreContext';
 
@@ -30,6 +30,23 @@ export const EoqPage: React.FC = () => {
   ]);
 
   const activeProduct = products.find((p) => p.id === selectedId) || null;
+
+  useEffect(() => {
+    if (selectedId === 'custom') return;
+    const p = products.find((x) => x.id === selectedId) || products[0];
+    if (!p) {
+      setSelectedId('custom');
+      return;
+    }
+    if (p.id !== selectedId) setSelectedId(p.id);
+    setAnnualDemand(p.annualDemand || 1200);
+    setOrderCost(p.orderCost || 50);
+    setUnitCost(p.unitCost || 10);
+    setHoldingRate(p.holdingRate || 20);
+    setLeadTime(p.leadTime || 7);
+    setServiceLevel(p.serviceLevel || 95);
+    setProdRate(Math.max(2400, Math.round((p.annualDemand || 1200) * 3)));
+  }, [products, selectedId]);
 
   const selectSku = (id: string) => {
     setSelectedId(id);
@@ -144,30 +161,30 @@ export const EoqPage: React.FC = () => {
       <Panel title="Model parameters" subtitle="Load any catalogue SKU or tweak parameters interactively">
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <Field label="Annual demand (D)">
-            <Input type="number" min="1" value={annualDemand} onChange={(e) => setAnnualDemand(Number(e.target.value))} />
+            <Input type="number" min="1" max="10000000" value={annualDemand} onChange={(e) => setAnnualDemand(clampNumericInput(e.target.value, 1, 1, 10000000))} />
           </Field>
           <Field label={tab === 'epq' ? 'Setup cost (S)' : 'Order cost (S)'}>
-            <Input type="number" min="0.1" step="0.5" value={orderCost} onChange={(e) => setOrderCost(Number(e.target.value))} />
+            <Input type="number" min="0.1" max="1000000" step="0.5" value={orderCost} onChange={(e) => setOrderCost(clampNumericInput(e.target.value, 50, 0.1, 1000000))} />
           </Field>
           <Field label="Unit cost ($)">
-            <Input type="number" min="0.01" step="0.1" value={unitCost} onChange={(e) => setUnitCost(Number(e.target.value))} />
+            <Input type="number" min="0.01" max="1000000" step="0.1" value={unitCost} onChange={(e) => setUnitCost(clampNumericInput(e.target.value, 10, 0.01, 1000000))} />
           </Field>
           <Field label="Holding rate (%/yr)">
-            <Input type="number" min="0.5" step="0.5" value={holdingRate} onChange={(e) => setHoldingRate(Number(e.target.value))} />
+            <Input type="number" min="0.5" max="200" step="0.5" value={holdingRate} onChange={(e) => setHoldingRate(clampNumericInput(e.target.value, 20, 0.5, 200))} />
           </Field>
           {tab === 'eoq' && (
             <>
               <Field label="Lead time (days)">
-                <Input type="number" min="0" value={leadTime} onChange={(e) => setLeadTime(Number(e.target.value))} />
+                <Input type="number" min="0" max="365" value={leadTime} onChange={(e) => setLeadTime(clampNumericInput(e.target.value, 0, 0, 365))} />
               </Field>
               <Field label="Service level (%)">
-                <Input type="number" min="50" max="99.9" step="0.5" value={serviceLevel} onChange={(e) => setServiceLevel(Number(e.target.value))} />
+                <Input type="number" min="50" max="99.9" step="0.5" value={serviceLevel} onChange={(e) => setServiceLevel(clampNumericInput(e.target.value, 95, 50, 99.9))} />
               </Field>
             </>
           )}
           {tab === 'epq' && (
             <Field label="Production rate p (/yr)" hint="Must exceed D">
-              <Input type="number" min="1" value={prodRate} onChange={(e) => setProdRate(Number(e.target.value))} />
+              <Input type="number" min="1" max="100000000" value={prodRate} onChange={(e) => setProdRate(clampNumericInput(e.target.value, 2400, 1, 100000000))} />
             </Field>
           )}
         </div>

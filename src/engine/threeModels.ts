@@ -68,6 +68,54 @@ export interface PlantStationInput {
   activeOrderIds?: string[];
 }
 
+export interface PlantTwinStationHandle {
+  apronMesh: THREE.Mesh;
+  beaconMesh: THREE.Mesh;
+  barMesh: THREE.Mesh;
+  headIdx: number;
+  qBoxMeshes: THREE.Mesh[];
+  orderToteMesh: THREE.Mesh;
+  partObj: THREE.Group;
+  x: number;
+}
+
+export interface PlantTwinBinHandle {
+  crateMesh: THREE.Mesh;
+  stripMesh: THREE.Mesh;
+  partObj: THREE.Group;
+  bx: number;
+  by: number;
+  bz: number;
+  sku: string;
+}
+
+export interface PlantTwinCarrierHandle {
+  toteMesh: THREE.Mesh;
+  carrierIdx: number;
+}
+
+export interface PlantTwinHandle {
+  topologyKey: string;
+  machineMatMap: Record<MachineVisualStatus, THREE.MeshStandardMaterial>;
+  statusMats: Record<StockStatus, THREE.MeshStandardMaterial>;
+  brassMat: THREE.MeshStandardMaterial;
+  stationHandles: PlantTwinStationHandle[];
+  binHandles: PlantTwinBinHandle[];
+  carrierHandles: PlantTwinCarrierHandle[];
+}
+
+export function computePlantTopologyKey(
+  products: ReadonlyArray<Pick<PlantRackProductInput, 'sku'>>,
+  stations: ReadonlyArray<Pick<PlantStationInput, 'stationNumber'>>
+): string {
+  const skuKey = products
+    .slice(0, 18)
+    .map((p) => String(p.sku || '').toUpperCase())
+    .join(',');
+  const stCount = stations.length ? Math.min(6, stations.length) : 3;
+  return `${stCount}::${skuKey}`;
+}
+
 export interface BuiltSceneRoot {
   root: THREE.Group;
   parts: THREE.Object3D[];
@@ -88,6 +136,7 @@ export interface BuiltSceneRoot {
     state: MachineVisualStatus;
   }>;
   floorAnchors?: Map<string, [number, number, number]>;
+  plantHandle?: PlantTwinHandle;
   dispose: () => void;
 }
 
@@ -95,7 +144,16 @@ export interface BuiltSceneRoot {
 // Procedural Texture Helpers (Zero External Assets)
 // ---------------------------------------------------------------------------
 
-function createBrushedMetalTexture(): THREE.CanvasTexture {
+function makeFallbackTexture(r: number, g: number, b: number): THREE.Texture {
+  const tex = new THREE.DataTexture(new Uint8Array([r, g, b, 255]), 1, 1);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function createBrushedMetalTexture(): THREE.Texture {
+  if (typeof document === 'undefined') {
+    return makeFallbackTexture(136, 136, 136);
+  }
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 256;
@@ -116,7 +174,10 @@ function createBrushedMetalTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-function createRibbedBeltTexture(): THREE.CanvasTexture {
+function createRibbedBeltTexture(): THREE.Texture {
+  if (typeof document === 'undefined') {
+    return makeFallbackTexture(30, 41, 59);
+  }
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 256;
@@ -139,7 +200,10 @@ function createRibbedBeltTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-function createFloorGridTexture(): THREE.CanvasTexture {
+function createFloorGridTexture(): THREE.Texture {
+  if (typeof document === 'undefined') {
+    return makeFallbackTexture(30, 41, 59);
+  }
   const canvas = document.createElement('canvas');
   canvas.width = 512;
   canvas.height = 512;
@@ -1216,10 +1280,11 @@ export function buildPlantFloorTwin(
     maintenance: bag.trackMat(new THREE.MeshStandardMaterial({ color: VISUAL_INDICATOR_SPECS.maintenance.hexColor, emissive: VISUAL_INDICATOR_SPECS.maintenance.hexColor, emissiveIntensity: 0.32, roughness: 0.32, metalness: 0.25 })),
   };
 
-  // Shared station geometries (memory & draw-call optimized)
+  // Shared station geometries (memory & draw-call optimized; supports in-place updates)
   const colGeo = bag.trackGeo(new THREE.BoxGeometry(0.12, 1.78, 0.12));
   const beamGeo = bag.trackGeo(new THREE.BoxGeometry(0.24, 0.14, 1.44));
   const headGeo = bag.trackGeo(new THREE.CylinderGeometry(0.08, 0.11, 0.36, 12));
+  const barUnitGeo = bag.trackGeo(new THREE.BoxGeometry(0.16, 0.11, 0.92));
   const beaconGeo = bag.trackGeo(new THREE.CylinderGeometry(0.06, 0.08, 0.2, 10));
   const apronGeo = bag.trackGeo(new THREE.BoxGeometry(0.95, 0.014, 1.56));
   const qBoxGeo = bag.trackGeo(new THREE.BoxGeometry(0.18, 0.11, 0.18));
@@ -1229,6 +1294,7 @@ export function buildPlantFloorTwin(
   const stCount = activeStations.length;
   const stSpan = Math.min(7.9, Math.max(4.4, (stCount - 1) * 2.05));
   const stationPositionsX: number[] = [];
+  const stationHandles: PlantTwinStationHandle[] = [];
 
   activeStations.forEach((st, idx) => {
     const x = stCount === 1 ? 0 : -stSpan / 2 + (idx * stSpan) / (stCount - 1);
@@ -1272,6 +1338,7 @@ export function buildPlantFloorTwin(
     const head = new THREE.Mesh(headGeo, p.chrome);
     head.position.set(0, headBaseY, 0);
     stGrp.add(head);
+    const headIdx = animatedHeads.length;
     animatedHeads.push({
       mesh: head,
       baseY: headBaseY,
@@ -1280,9 +1347,10 @@ export function buildPlantFloorTwin(
       state: machineState,
     });
 
-    // Utilization gauge bar on gantry face
+    // Utilization gauge bar on gantry face (unit width scaled cleanly in-place)
     const utilFrac = Math.max(0.15, Math.min(1, st.utilizationPct / 100));
-    const bar = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.16, 0.11, 0.92 * utilFrac)), stateMat);
+    const bar = new THREE.Mesh(barUnitGeo, stateMat);
+    bar.scale.z = utilFrac;
     bar.position.set(0.08, 1.9, 0);
     stGrp.add(bar);
 
@@ -1291,27 +1359,29 @@ export function buildPlantFloorTwin(
     beacon.position.set(0, 2.02, 0);
     stGrp.add(beacon);
 
-    // Inter-station Input Buffer Rack + WIP Stack
+    // Inter-station Input Buffer Rack + 6 Pre-allocated WIP Stack Boxes (toggled in-place)
     const bufBase = new THREE.Mesh(bufFrameGeo, p.secondary);
     bufBase.position.set(-0.34, 0.02, 1.02);
     stGrp.add(bufBase);
 
     const qBoxes = Math.min(6, Math.max(0, Math.round(qLen)));
     const qMat = qLen / bufCap >= 0.75 || machineState === 'congested' ? machineMatMap.congested : p.brass;
-    for (let q = 0; q < qBoxes; q++) {
+    const qBoxMeshes: THREE.Mesh[] = [];
+    for (let q = 0; q < 6; q++) {
       const colSlot = q % 2;
       const layer = Math.floor(q / 2);
       const qMesh = new THREE.Mesh(qBoxGeo, qMat);
       qMesh.position.set(-0.44 + colSlot * 0.2, 0.085 + layer * 0.12, 1.02);
+      qMesh.visible = q < qBoxes;
       stGrp.add(qMesh);
+      qBoxMeshes.push(qMesh);
     }
 
-    // Active Production Order badge tote on gantry front rail
-    if (st.activeOrderIds && st.activeOrderIds.length > 0) {
-      const orderTote = new THREE.Mesh(orderToteGeo, p.accent);
-      orderTote.position.set(0.32, 0.08, 0.96);
-      stGrp.add(orderTote);
-    }
+    // Active Production Order badge tote on gantry front rail (pre-allocated & toggled in-place)
+    const orderTote = new THREE.Mesh(orderToteGeo, p.accent);
+    orderTote.position.set(0.32, 0.08, 0.96);
+    orderTote.visible = Boolean(st.activeOrderIds && st.activeOrderIds.length > 0);
+    stGrp.add(orderTote);
 
     const qInfo = typeof st.avgQueueLen === 'number' ? ` · Q ${st.avgQueueLen.toFixed(1)}/${bufCap}` : '';
     const stateLabel = VISUAL_INDICATOR_SPECS[machineState].label;
@@ -1330,6 +1400,17 @@ export function buildPlantFloorTwin(
       machineState,
       focusTarget: [x, 0.95, 1.55],
     });
+
+    stationHandles.push({
+      apronMesh: apron,
+      beaconMesh: beacon,
+      barMesh: bar,
+      headIdx,
+      qBoxMeshes,
+      orderToteMesh: orderTote,
+      partObj: stGrp,
+      x,
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -1345,6 +1426,7 @@ export function buildPlantFloorTwin(
   // Shared Rack Frame Geometries
   const postGeo = bag.trackGeo(new THREE.BoxGeometry(0.09, 2.35, 0.09));
   const shelfGeo = bag.trackGeo(new THREE.BoxGeometry(3.04, 0.06, 1.18));
+  const crateUnitGeo = bag.trackGeo(new THREE.BoxGeometry(0.72, 1.0, 0.86));
   const rackCenters = [-3.9, 0, 3.9];
   rackCenters.forEach((rx) => {
     const rack = new THREE.Group();
@@ -1372,6 +1454,7 @@ export function buildPlantFloorTwin(
   const displaySkus = products.slice(0, 18);
   const stripGeo = bag.trackGeo(new THREE.BoxGeometry(0.73, 0.08, 0.05));
   const cratePositions: Array<{ sku: string; pos: [number, number, number]; status: StockStatus; starved: boolean }> = [];
+  const binHandles: PlantTwinBinHandle[] = [];
 
   displaySkus.forEach((prod, i) => {
     const rackIdx = Math.floor(i / 6);
@@ -1389,7 +1472,8 @@ export function buildPlantFloorTwin(
     const binGrp = new THREE.Group();
     binGrp.position.set(bx, by, bz);
 
-    const crate = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.72, binHeight, 0.86)), p.primary);
+    const crate = new THREE.Mesh(crateUnitGeo, p.primary);
+    crate.scale.y = binHeight;
     crate.position.y = binHeight / 2;
     binGrp.add(crate);
 
@@ -1425,6 +1509,16 @@ export function buildPlantFloorTwin(
       focusTarget: anchor,
       usedInAssemblies: prod.usedInAssemblies,
     });
+
+    binHandles.push({
+      crateMesh: crate,
+      stripMesh: strip,
+      partObj: binGrp,
+      bx,
+      by,
+      bz,
+      sku: prod.sku,
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -1433,8 +1527,10 @@ export function buildPlantFloorTwin(
   const railMat = bag.trackMat(new THREE.MeshStandardMaterial({ color: '#334155', roughness: 0.65, metalness: 0.3 }));
   const railGeo = bag.trackGeo(new THREE.BoxGeometry(0.06, 0.015, 2.35));
   const toteGeo = bag.trackGeo(new THREE.BoxGeometry(0.28, 0.16, 0.28));
+  const palletGeo = bag.trackGeo(new THREE.BoxGeometry(0.36, 0.04, 0.36));
 
   const transferLanesX = rackCenters;
+  const carrierHandles: PlantTwinCarrierHandle[] = [];
   transferLanesX.forEach((lx, laneIdx) => {
     const rail = new THREE.Mesh(railGeo, railMat);
     rail.position.set(lx, 0.009, -0.35);
@@ -1449,7 +1545,7 @@ export function buildPlantFloorTwin(
           : statusMats.ok;
 
     const carrierGrp = new THREE.Group();
-    const pallet = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.36, 0.04, 0.36)), p.secondary);
+    const pallet = new THREE.Mesh(palletGeo, p.secondary);
     pallet.position.y = 0.02;
     carrierGrp.add(pallet);
     const tote = new THREE.Mesh(toteGeo, toteMat);
@@ -1463,6 +1559,7 @@ export function buildPlantFloorTwin(
     carrierGrp.position.copy(start).lerp(end, phase);
     root.add(carrierGrp);
 
+    const carrierIdx = materialCarriers.length;
     materialCarriers.push({
       mesh: carrierGrp,
       start,
@@ -1471,7 +1568,18 @@ export function buildPlantFloorTwin(
       speed: anyLineDown ? 0 : Math.max(0.04, conveyorSpeed * 1.15),
       stalled: Boolean(matchedBin?.status === 'out' || anyLineDown),
     });
+    carrierHandles.push({ toteMesh: tote, carrierIdx });
   });
+
+  const plantHandle: PlantTwinHandle = {
+    topologyKey: computePlantTopologyKey(products, activeStations),
+    machineMatMap,
+    statusMats,
+    brassMat: p.brass,
+    stationHandles,
+    binHandles,
+    carrierHandles,
+  };
 
   return {
     root,
@@ -1480,8 +1588,173 @@ export function buildPlantFloorTwin(
     materialCarriers,
     animatedHeads,
     floorAnchors,
+    plantHandle,
     dispose: () => bag.dispose(),
   };
+}
+
+/**
+ * Updates an already-constructed Plant & Warehouse 3D twin in-place without tearing down or recreating
+ * WebGL geometries/meshes/textures when only station telemetry, machine states, queues, or rack stock levels change.
+ * Returns `false` if the underlying station count or SKU rack list changed (requiring a structural rebuild).
+ */
+export function updatePlantFloorTwin(
+  built: BuiltSceneRoot,
+  products: PlantRackProductInput[],
+  stations: PlantStationInput[]
+): boolean {
+  const handle = built.plantHandle;
+  if (!handle) return false;
+
+  const activeStations: PlantStationInput[] = stations.length
+    ? stations.slice(0, 6)
+    : [
+        { stationNumber: 1, stationId: 'S1', stationName: 'Subassembly', utilizationPct: 86, taskCount: 4, tasksLabel: 'Subassembly mount', machineState: 'processing', bufferCapacity: 6 },
+        { stationNumber: 2, stationId: 'S2', stationName: 'Drive & Tension', utilizationPct: 96, taskCount: 5, tasksLabel: 'Drive & belt tension', isBottleneck: true, machineState: 'bottleneck', bufferCapacity: 6, avgQueueLen: 3.8 },
+        { stationNumber: 3, stationId: 'S3', stationName: 'Final QA & Pack', utilizationPct: 78, taskCount: 4, tasksLabel: 'Inspection & pack', machineState: 'processing', bufferCapacity: 6 },
+      ];
+
+  const nextKey = computePlantTopologyKey(products, activeStations);
+  if (handle.topologyKey !== nextKey) return false;
+
+  const anyLineDown = activeStations.every((s) => s.machineState === 'breakdown' || s.machineState === 'maintenance');
+  const avgThroughput =
+    activeStations.find((s) => typeof s.throughputPerHour === 'number' && s.throughputPerHour > 0)?.throughputPerHour ?? 45;
+  const conveyorSpeed = anyLineDown ? 0 : Math.max(0.03, Math.min(0.16, 0.04 + (avgThroughput / 60) * 0.05));
+
+  built.conveyorItems.forEach((item) => {
+    item.speed = conveyorSpeed;
+  });
+
+  // 1. Update Workstations in-place
+  handle.stationHandles.forEach((sh, idx) => {
+    const st = activeStations[idx];
+    if (!st) return;
+
+    const bufCap = Math.max(1, st.bufferCapacity ?? 6);
+    const qLen = st.avgQueueLen ?? 0;
+    const machineState: MachineVisualStatus =
+      st.machineState ??
+      classifyMachineVisualStatus({
+        queueLen: qLen,
+        bufferCapacity: bufCap,
+        isBottleneck: Boolean(st.isBottleneck),
+        downPct: st.downPct ?? 0,
+        pmPct: st.pmPct ?? 0,
+        blockedPct: st.blockedPct ?? 0,
+        utilizationPct: st.utilizationPct,
+      });
+
+    const stateMat = handle.machineMatMap[machineState];
+    sh.apronMesh.material = stateMat;
+    sh.beaconMesh.material = stateMat;
+    sh.barMesh.material = stateMat;
+    sh.barMesh.scale.z = Math.max(0.15, Math.min(1, st.utilizationPct / 100));
+
+    const headRef = built.animatedHeads?.[sh.headIdx];
+    if (headRef) {
+      const headBaseY = machineState === 'maintenance' ? 1.36 : 1.52;
+      headRef.baseY = headBaseY;
+      headRef.active = machineState === 'processing' || machineState === 'bottleneck';
+      headRef.state = machineState;
+      if (!headRef.active) {
+        headRef.mesh.position.y = headBaseY;
+      }
+    }
+
+    const qBoxes = Math.min(6, Math.max(0, Math.round(qLen)));
+    const qMat = qLen / bufCap >= 0.75 || machineState === 'congested' ? handle.machineMatMap.congested : handle.brassMat;
+    sh.qBoxMeshes.forEach((qMesh, q) => {
+      qMesh.visible = q < qBoxes;
+      qMesh.material = qMat;
+    });
+
+    sh.orderToteMesh.visible = Boolean(st.activeOrderIds && st.activeOrderIds.length > 0);
+
+    const qInfo = typeof st.avgQueueLen === 'number' ? ` · Q ${st.avgQueueLen.toFixed(1)}/${bufCap}` : '';
+    const stateLabel = VISUAL_INDICATOR_SPECS[machineState].label;
+    const partId = `station-${st.stationNumber}`;
+    const nextLabel = `${st.stationId || `S${st.stationNumber}`} · ${st.stationName || `Workstation ${st.stationNumber}`} (${Math.round(st.utilizationPct)}%)`;
+    const nextRole = `${stateLabel} · ${st.tasksLabel}${qInfo}`;
+
+    built.floorAnchors?.set(partId, [sh.x, 0.95, 1.55]);
+    if (st.stationId) built.floorAnchors?.set(st.stationId.toUpperCase(), [sh.x, 0.95, 1.55]);
+
+    sh.partObj.traverse((child) => {
+      const ud = child.userData as Partial<PartUserData>;
+      if (!ud.partId) return;
+      ud.label = nextLabel;
+      ud.role = nextRole;
+      ud.qtyPer = st.taskCount;
+      ud.machineState = machineState;
+    });
+  });
+
+  // 2. Update Rack Bins in-place
+  const displaySkus = products.slice(0, 18);
+  const cratePositions: Array<{ status: StockStatus; starved: boolean }> = [];
+
+  handle.binHandles.forEach((bh, i) => {
+    const prod = displaySkus[i];
+    if (!prod) return;
+
+    const fillRatio = prod.rop > 0 ? Math.min(1.25, Math.max(0.16, prod.stock / (prod.rop * 2))) : 0.7;
+    const binHeight = 0.22 + fillRatio * 0.42;
+
+    bh.crateMesh.scale.y = binHeight;
+    bh.crateMesh.position.y = binHeight / 2;
+    bh.stripMesh.position.y = Math.max(0.08, binHeight - 0.06);
+
+    const visualInv = mapStockToInventoryVisualStatus(prod.status, prod.stock, prod.rop);
+    bh.stripMesh.material =
+      handle.statusMats[prod.status] ||
+      handle.statusMats[visualInv === 'normal' ? 'ok' : visualInv === 'reorder' ? 'reorder' : 'critical'];
+
+    const rackCode = prod.rackCode || formatRackLocation(i).code;
+    const partId = `sku-${prod.sku}`;
+    const anchor: [number, number, number] = [bh.bx, bh.by + binHeight * 0.5, bh.bz + 0.35];
+    built.floorAnchors?.set(partId, anchor);
+    built.floorAnchors?.set(prod.sku.toUpperCase(), anchor);
+
+    cratePositions.push({
+      status: prod.status,
+      starved: Boolean(prod.starvedInSimulation),
+    });
+
+    const nextLabel = `${prod.sku} · ${prod.name}`;
+    const nextRole = `${rackCode} · On hand ${prod.stock.toLocaleString()} ${prod.unit} (ROP ${Math.round(prod.rop).toLocaleString()})`;
+
+    bh.partObj.traverse((child) => {
+      const ud = child.userData as Partial<PartUserData>;
+      if (!ud.partId) return;
+      ud.label = nextLabel;
+      ud.role = nextRole;
+      ud.qtyPer = prod.stock;
+      ud.status = prod.status;
+      ud.rackCode = rackCode;
+      ud.focusTarget = anchor;
+      ud.usedInAssemblies = prod.usedInAssemblies;
+    });
+  });
+
+  // 3. Update Material Transfer Carriers in-place
+  handle.carrierHandles.forEach((ch, laneIdx) => {
+    const matchedBin = cratePositions[laneIdx * 6] || cratePositions[laneIdx];
+    ch.toteMesh.material =
+      matchedBin && (matchedBin.starved || matchedBin.status === 'critical' || matchedBin.status === 'out')
+        ? handle.statusMats.critical
+        : matchedBin && matchedBin.status === 'reorder'
+          ? handle.statusMats.reorder
+          : handle.statusMats.ok;
+
+    const carrier = built.materialCarriers?.[ch.carrierIdx];
+    if (carrier) {
+      carrier.speed = anyLineDown ? 0 : Math.max(0.04, conveyorSpeed * 1.15);
+      carrier.stalled = Boolean(matchedBin?.status === 'out' || anyLineDown);
+    }
+  });
+
+  return true;
 }
 
 export function buildAssembly3D(sku: AssemblySku, finishId: FinishPresetId): BuiltSceneRoot {

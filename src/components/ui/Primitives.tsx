@@ -354,6 +354,13 @@ export const Modal: React.FC<{
     const focusTimer = window.setTimeout(() => {
       const dialog = dialogRef.current;
       if (!dialog) return;
+      const autoTarget = dialog.querySelector<HTMLElement>(
+        '[autofocus]:not(:disabled), [data-autofocus="true"]:not(:disabled)'
+      );
+      if (autoTarget) {
+        autoTarget.focus();
+        return;
+      }
       const focusable = dialog.querySelectorAll<HTMLElement>(
         'button:not(:disabled), [href], input:not([type="hidden"]):not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
       );
@@ -552,5 +559,5 @@ export function downloadFile(filename: string, content: string, mime = 'text/pla
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

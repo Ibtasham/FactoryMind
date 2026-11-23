@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { LineChart } from '../components/charts/Charts';
-import { AssumptionPanel, Field, Input, Panel, SegmentedControl, Select, StatCard } from '../components/ui/Primitives';
+import { AssumptionPanel, Button, EmptyState, Field, Input, Panel, SegmentedControl, Select, StatCard } from '../components/ui/Primitives';
 import {
   crostonMethod,
   emaMethod,
@@ -17,7 +17,7 @@ import {
   smaMethod,
   wmaMethod,
 } from '../engine/forecast';
-import { fmtNum } from '../engine/formatters';
+import { clampNumericInput, fmtNum } from '../engine/formatters';
 import { monthLabels } from '../store/store';
 import { useStore } from '../store/StoreContext';
 
@@ -35,6 +35,17 @@ export const ForecastPage: React.FC = () => {
   const [gamma, setGamma] = useState<number>(0.2);
   const [seasonPeriod, setSeasonPeriod] = useState<number>(12);
   const [selectedMethodKey, setSelectedMethodKey] = useState<string>('auto');
+
+  useEffect(() => {
+    setWindowLen(settings.smaW || 3);
+    setAlpha(settings.emaAlpha || 0.3);
+  }, [settings.smaW, settings.emaAlpha]);
+
+  useEffect(() => {
+    if (products.length && !products.some((p) => p.id === skuId)) {
+      setSkuId(products[0].id);
+    }
+  }, [products, skuId]);
 
   const history = useMemo(() => {
     if (sourceMode === 'sku') {
@@ -184,13 +195,13 @@ export const ForecastPage: React.FC = () => {
           )}
 
           <Field label="Forecast horizon">
-            <Input type="number" min="1" max="24" value={horizon} onChange={(e) => setHorizon(Math.max(1, Number(e.target.value) || 6))} />
+            <Input type="number" min="1" max="24" value={horizon} onChange={(e) => setHorizon(clampNumericInput(e.target.value, 6, 1, 24, true))} />
           </Field>
           <Field label="MA window (w)">
-            <Input type="number" min="2" max="12" value={windowLen} onChange={(e) => setWindowLen(Math.max(2, Number(e.target.value) || 3))} />
+            <Input type="number" min="2" max="12" value={windowLen} onChange={(e) => setWindowLen(clampNumericInput(e.target.value, 3, 2, 12, true))} />
           </Field>
           <Field label="Alpha (α)">
-            <Input type="number" min="0.05" max="0.95" step="0.05" value={alpha} onChange={(e) => setAlpha(Number(e.target.value))} />
+            <Input type="number" min="0.05" max="0.95" step="0.05" value={alpha} onChange={(e) => setAlpha(clampNumericInput(e.target.value, 0.3, 0.05, 0.95))} />
           </Field>
           <Field label="Plotted method">
             <Select value={selectedMethodKey} onChange={(e) => setSelectedMethodKey(e.target.value)}>
@@ -209,16 +220,29 @@ export const ForecastPage: React.FC = () => {
 
         <div className="grid grid-cols-3 gap-3 mt-3 max-w-md">
           <Field label="Holt β">
-            <Input type="number" min="0.05" max="0.95" step="0.05" value={beta} onChange={(e) => setBeta(Number(e.target.value))} />
+            <Input type="number" min="0.05" max="0.95" step="0.05" value={beta} onChange={(e) => setBeta(clampNumericInput(e.target.value, 0.15, 0.05, 0.95))} />
           </Field>
           <Field label="Season γ">
-            <Input type="number" min="0.05" max="0.95" step="0.05" value={gamma} onChange={(e) => setGamma(Number(e.target.value))} />
+            <Input type="number" min="0.05" max="0.95" step="0.05" value={gamma} onChange={(e) => setGamma(clampNumericInput(e.target.value, 0.2, 0.05, 0.95))} />
           </Field>
           <Field label="Season p">
-            <Input type="number" min="2" max="24" value={seasonPeriod} onChange={(e) => setSeasonPeriod(Math.max(2, Number(e.target.value) || 12))} />
+            <Input type="number" min="2" max="24" value={seasonPeriod} onChange={(e) => setSeasonPeriod(clampNumericInput(e.target.value, 12, 2, 24, true))} />
           </Field>
         </div>
       </Panel>
+
+      {history.length === 0 ? (
+        <EmptyState
+          title="No historical demand points for this source"
+          message="Select a SKU with historical demand observations, switch to Synthetic Pattern, or paste comma-separated demand numbers in Custom CSV."
+          action={
+            <Button size="sm" variant="secondary" onClick={() => setSourceMode('pattern')}>
+              Switch to Synthetic Pattern
+            </Button>
+          }
+        />
+      ) : (
+        <>
 
       {/* Diagnostic KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
@@ -330,6 +354,8 @@ export const ForecastPage: React.FC = () => {
           </table>
         </div>
       </Panel>
+        </>
+      )}
 
       <AssumptionPanel topicId="forecast" />
     </div>

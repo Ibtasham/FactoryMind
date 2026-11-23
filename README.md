@@ -44,14 +44,14 @@ FactoryMind is a browser-based Industrial & Production Engineering (IPE) decisio
 
 ```bash
 # Install dependencies
-npm install
+bun install
 
 # Start full-stack Express + Vite server (port 3000)
-npm run dev
+bun run dev
 
-# Run pure TypeScript engine & store test suite
-npm test
+# Run pure TypeScript engine, server & store test suite
+bun test
 
 # Type-check, static-check, run all unit/integration suites & build production bundle
-npm run verify
+bun run verify
 ```

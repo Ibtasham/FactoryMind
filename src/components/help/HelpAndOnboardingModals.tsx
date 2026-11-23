@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, BookOpen, CheckCircle2, Circle, Compass, History, Search, Trash2 } from 'lucide-react';
 import { RouteId } from '../layout/AppShell';
 import { Button, ConfirmDialog, EmptyState, Input, Modal, SegmentedControl } from '../ui/Primitives';
@@ -23,6 +23,13 @@ export const HelpCenterModal: React.FC<{
   const { datasetProvenance } = useStore();
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState<'guides' | 'models'>('guides');
+
+  useEffect(() => {
+    if (open) {
+      setQuery('');
+      setTab('guides');
+    }
+  }, [open]);
 
   const filteredTopics = useMemo(() => {
     const q = query.trim().toLowerCase();

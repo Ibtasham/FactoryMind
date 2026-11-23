@@ -30,7 +30,8 @@ import { abcAnalysis, abcSummary, spcAnalysis } from '../engine/ipe';
 import { fmtCover, fmtInt, fmtMoney, fmtNum } from '../engine/formatters';
 import { generateDemandDataset, compareMethods, smaMethod, holtLinear, hwAdditive, seasonalNaive, emaMethod, crostonMethod } from '../engine/forecast';
 import { compareAlgorithms } from '../engine/linebal';
-import { simulateProductionLine, stationsFromLineBalance } from '../engine/prodsim';
+import { buildDesConfigFromFactorySim, runDiscreteEventSimulation } from '../engine/desEngine';
+import { stationsFromLineBalanceForFactory } from '../engine/factorySim';
 import { generateOperationsPdf } from '../engine/pdfReport';
 import {
   buildOperationsReport,
@@ -58,7 +59,7 @@ export const OneForAllPage: React.FC<{
   onMoveStock: (p: Product, type: 'in' | 'out') => void;
   onInspect3D: (sku?: string) => void;
 }> = ({ onNavigate, onOpenProduct, onAddProduct, onMoveStock, onInspect3D }) => {
-  const { products, transactions, settings, summary, metricsOf, lineBalance, pushToast } = useStore();
+  const { products, transactions, settings, summary, metricsOf, lineBalance, factorySimConfig, pushToast } = useStore();
 
   const [focus, setFocus] = useState<SuiteFocus>('all');
   const [sceneMode, setSceneMode] = useState<SceneModeId>('assembly');
@@ -82,7 +83,7 @@ export const OneForAllPage: React.FC<{
     return abcSummary(analyzed);
   }, [products, settings.abcA, settings.abcB]);
 
-  // Line Balancing + Live DES Station Telemetry
+  // Line Balancing + Live DES Station Telemetry (synced with FactorySimConfig)
   const lineBalSummary = useMemo(() => {
     const cmp = compareAlgorithms({
       tasks: lineBalance.tasks,
@@ -91,27 +92,50 @@ export const OneForAllPage: React.FC<{
     });
     const algo = lineBalance.selectedAlgo === 'comsail' ? 'comsoal' : lineBalance.selectedAlgo;
     const best = cmp.algorithms[algo] || cmp.best || cmp.algorithms.exact || cmp.algorithms.rpw;
-    const simStations = stationsFromLineBalance(best, { cv: 0.2, bufferCapacity: 6 });
-    const sim = simStations.length
-      ? simulateProductionLine({
-          stations: simStations,
-          arrivalRatePerHour: Math.max(0.5, (60 / Math.max(1, lineBalance.cycleTime)) * 0.9),
-          shiftMinutes: 480,
-          warmupMinutes: 60,
-          replications: 8,
-          seed: 42,
-        })
+    const baseLbStations = stationsFromLineBalanceForFactory(best);
+    const lbStations = baseLbStations.map((st, idx) => {
+      const configured = factorySimConfig.stations[idx];
+      return configured
+        ? {
+            ...configured,
+            id: st.id,
+            name: st.name,
+            meanTimeMin: st.meanTimeMin,
+          }
+        : st;
+    });
+    const desCfg = lbStations.length
+      ? buildDesConfigFromFactorySim(
+          {
+            ...factorySimConfig,
+            stations: lbStations,
+            replications: 4,
+            daysToSimulate: 1,
+            warmupHours: 1,
+          },
+          {
+            includeOpenArrivals: true,
+            enableShifts: factorySimConfig.desOptions?.enableShifts ?? true,
+            workingDaysPerWeek: factorySimConfig.desOptions?.workDaysPerWeek ?? 5,
+            interShiftGapMin: factorySimConfig.desOptions?.shiftGapMin ?? 15,
+            failureDistKind: factorySimConfig.desOptions?.failureDist ?? 'weibull',
+            customSecondaryRoute: false,
+          }
+        )
       : null;
+    const desSim = desCfg ? runDiscreteEventSimulation(desCfg) : null;
     const stations: PlantStationInput[] = (best?.stations || []).map((st, idx) => {
-      const telemetry = sim?.valid ? sim.stations[idx] : undefined;
+      const telemetry = desSim?.stations[idx];
       return {
         stationNumber: idx + 1,
-        utilizationPct: Math.round((st.time / lineBalance.cycleTime) * 100),
+        utilizationPct: telemetry
+          ? Math.round(telemetry.assetUtilizationPct)
+          : Math.round((st.time / lineBalance.cycleTime) * 100),
         taskCount: st.tasks.length,
         tasksLabel: st.tasks.map((t) => t.id).join(', '),
         isBottleneck: telemetry?.isBottleneck ?? false,
         avgQueueLen: telemetry?.avgQueueLen ?? 0,
-        throughputPerHour: sim?.valid ? sim.effectiveThroughputPerHour : undefined,
+        throughputPerHour: desSim ? desSim.throughputPerScheduledHour.mean : undefined,
       };
     });
     return {
@@ -119,7 +143,7 @@ export const OneForAllPage: React.FC<{
       efficiencyPct: Math.round(best?.efficiency ?? 0),
       stations,
     };
-  }, [lineBalance]);
+  }, [lineBalance, factorySimConfig]);
 
   // Forecast & SPC Snapshots
   const forecastQuick = useMemo(() => {

@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { AlertTriangle, Box, Download, Edit3, Factory, Plus, Trash2 } from 'lucide-react';
 import { RouteId } from '../components/layout/AppShell';
 import { AssumptionPanel, Button, downloadFile, EmptyState, Field, Input, Panel, Select, StatCard } from '../components/ui/Primitives';
-import { fmtInt, fmtNum, shortDate } from '../engine/formatters';
+import { clampNumericInput, fmtInt, fmtNum, shortDate } from '../engine/formatters';
 import { LotRule, MrpItemInput, mrpPlan, mrpToCSV } from '../engine/mrp';
 import { isAssemblySku } from '../engine/threeSpecs';
 import { Product } from '../store/store';
@@ -153,10 +153,22 @@ export const ProductionPage: React.FC<{
             </Field>
           </div>
           <Field label="Build quantity">
-            <Input type="number" min="1" value={planQty} onChange={(e) => setPlanQty(Math.max(1, Number(e.target.value) || 1))} />
+            <Input
+              type="number"
+              min="1"
+              max="100000"
+              value={planQty}
+              onChange={(e) => setPlanQty(clampNumericInput(e.target.value, 1, 1, 100000, true))}
+            />
           </Field>
           <Field label="Need in (days)">
-            <Input type="number" min="0" value={needInDays} onChange={(e) => setNeedInDays(Math.max(0, Number(e.target.value) || 0))} />
+            <Input
+              type="number"
+              min="0"
+              max="365"
+              value={needInDays}
+              onChange={(e) => setNeedInDays(clampNumericInput(e.target.value, 0, 0, 365, true))}
+            />
           </Field>
           <Field label="Bucket size (days)">
             <Select value={bucketSizeDays} onChange={(e) => setBucketSizeDays(Number(e.target.value))}>
@@ -183,7 +195,7 @@ export const ProductionPage: React.FC<{
                 min="14"
                 max="365"
                 value={horizonDays}
-                onChange={(e) => setHorizonDays(Math.max(14, Number(e.target.value) || 60))}
+                onChange={(e) => setHorizonDays(clampNumericInput(e.target.value, 60, 14, 365, true))}
               />
             </Field>
           </div>
@@ -200,12 +212,24 @@ export const ProductionPage: React.FC<{
           </div>
           <div className="lg:col-span-2">
             <Field label="Open PO qty">
-              <Input type="number" min="1" value={rcptQty} onChange={(e) => setRcptQty(Math.max(1, Number(e.target.value) || 1))} />
+              <Input
+                type="number"
+                min="1"
+                max="1000000"
+                value={rcptQty}
+                onChange={(e) => setRcptQty(clampNumericInput(e.target.value, 1, 1, 1000000, true))}
+              />
             </Field>
           </div>
           <div className="lg:col-span-2">
             <Field label="Arrives (days)">
-              <Input type="number" min="0" value={rcptDays} onChange={(e) => setRcptDays(Math.max(0, Number(e.target.value) || 0))} />
+              <Input
+                type="number"
+                min="0"
+                max="365"
+                value={rcptDays}
+                onChange={(e) => setRcptDays(clampNumericInput(e.target.value, 0, 0, 365, true))}
+              />
             </Field>
           </div>
           <div className="lg:col-span-1">

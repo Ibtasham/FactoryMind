@@ -1,9 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { Check, FileText, RotateCcw, Save, Sliders } from 'lucide-react';
-import { DecisionAssistantPanel } from '../components/assistant/DecisionAssistantPanel';
 import { BarChart } from '../components/charts/Charts';
 import { RouteId } from '../components/layout/AppShell';
-import { Button, EmptyState, Modal, Panel, SegmentedControl, StatCard } from '../components/ui/Primitives';
+import { Button, EmptyState, Modal, ModuleSkeleton, Panel, SegmentedControl, StatCard } from '../components/ui/Primitives';
+
+const DecisionAssistantPanel = lazy(() =>
+  import('../components/assistant/DecisionAssistantPanel').then((m) => ({ default: m.DecisionAssistantPanel }))
+);
 import {
   advisorAnalyse,
   AdvisorFinding,
@@ -61,6 +64,12 @@ export const AdvisorPage: React.FC<{
   const [simSlHigh, setSimSlHigh] = useState<number>(savedPolicy.band[1]);
   const [kindFilter, setKindFilter] = useState<string>('all');
   const [confirmBulkOpen, setConfirmBulkOpen] = useState(false);
+
+  useEffect(() => {
+    setSimCover(savedPolicy.cover);
+    setSimSlLow(savedPolicy.band[0]);
+    setSimSlHigh(savedPolicy.band[1]);
+  }, [savedPolicy]);
 
   const rows = useMemo(() => products.map((p) => ({ p, m: metricsOf(p) })), [products, metricsOf]);
 
@@ -194,11 +203,13 @@ export const AdvisorPage: React.FC<{
       </div>
 
       {advisorMode === 'assistant' ? (
-        <DecisionAssistantPanel
-          onNavigate={onNavigate}
-          initialSku={assistantSku}
-          initialQuestion={assistantQuery}
-        />
+        <Suspense fallback={<ModuleSkeleton label="Loading Decision Assistant…" />}>
+          <DecisionAssistantPanel
+            onNavigate={onNavigate}
+            initialSku={assistantSku}
+            initialQuestion={assistantQuery}
+          />
+        </Suspense>
       ) : !products.length ? (
         <EmptyState
           title="No SKUs to audit"

@@ -2,7 +2,10 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import fs from 'fs';
 import path from 'path';
+import {fileURLToPath} from 'node:url';
 import {defineConfig} from 'vite';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function normalizeBasePath(raw?: string): string {
   const trimmed = (raw || '').trim();
@@ -115,6 +118,22 @@ export default defineConfig(() => {
             fs.writeFileSync(path.join(distDir, '404.html'), buildGitHubPages404Html(base), 'utf8');
             fs.writeFileSync(path.join(distDir, '.nojekyll'), '', 'utf8');
           }
+        },
+      },
+      // Rewrites og:image to an absolute URL when VITE_SITE_URL is provided at build time.
+      {
+        name: 'absolute-og-image',
+        transformIndexHtml(html: string): string {
+          const siteUrl = (process.env.VITE_SITE_URL || '').trim().replace(/\/+$/, '');
+          if (!siteUrl) return html;
+          return html.replace(
+            /(<meta\s+property=["']og:image["']\s+content=["'])([^"']+)(["']\s*\/?>)/i,
+            (_m, pre: string, content: string, post: string) => {
+              if (/^https?:\/\//i.test(content)) return `${pre}${content}${post}`;
+              const pathPart = content.startsWith('/') ? content : `/${content}`;
+              return `${pre}${siteUrl}${pathPart}${post}`;
+            }
+          );
         },
       },
     ],

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   Copy,
@@ -56,6 +56,11 @@ export const ReportsPage: React.FC<{
   const [lotRule, setLotRule] = useState<LotRule>('l4l');
   const [benchmarkKey, setBenchmarkKey] = useState<string>(lineBalance.benchmarkKey || 'bosch-13');
   const [cycleTime, setCycleTime] = useState<number>(lineBalance.cycleTime || 10);
+
+  useEffect(() => {
+    setBenchmarkKey(lineBalance.benchmarkKey || 'bosch-13');
+    setCycleTime(lineBalance.cycleTime || 10);
+  }, [lineBalance.benchmarkKey, lineBalance.cycleTime]);
   const [selectedAssemblyId, setSelectedAssemblyId] = useState<string>('');
   const [skuSearch, setSkuSearch] = useState<string>('');
   const [sortBy, setSortBy] = useState<SortField>('usageValue');

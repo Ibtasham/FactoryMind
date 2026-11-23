@@ -56,6 +56,27 @@ export interface FactoryMaterialInput {
   unitCost: number;
 }
 
+export interface FactoryDesOrderConfig {
+  id: string;
+  sku: string;
+  routeId: string;
+  qty: number;
+  releaseAtMin: number;
+  dueAtMin?: number;
+  priority?: number;
+}
+
+export interface FactoryDesPersistedOptions {
+  deterministic: boolean;
+  enableShifts: boolean;
+  workDaysPerWeek: number;
+  shiftGapMin: number;
+  failureDist: 'weibull' | 'exponential' | 'lognormal';
+  secondaryRoute: boolean;
+  includeOpenArrivals: boolean;
+  orders: FactoryDesOrderConfig[];
+}
+
 export interface FactorySimConfig {
   name: string;
   assemblySku: string;
@@ -80,6 +101,7 @@ export interface FactorySimConfig {
   enforceMaterialFlow: boolean;
   stations: FactoryStationConfig[];
   materials: FactoryMaterialInput[];
+  desOptions?: FactoryDesPersistedOptions;
   sourceNotes: {
     demandOrigin: string;
     lineBalanceOrigin: string;

@@ -19,8 +19,10 @@ import {
   AssistantResponse,
   buildAssistantWorkspaceContext,
   DECISION_STARTER_PROMPTS,
+  isStaticHostingEnvironment,
   ProvenanceTag,
   runDeterministicDecisionQuery,
+  STATIC_AI_UNAVAILABLE_NOTICE,
 } from '../../engine/decisionAssistant';
 import { fmtInt, fmtNum } from '../../engine/formatters';
 import { useStore } from '../../store/StoreContext';
@@ -28,7 +30,7 @@ import { useStore } from '../../store/StoreContext';
 interface GeminiStatusPayload {
   geminiConfigured: boolean;
   model: string;
-  engineMode: string;
+  engineMode: 'static-only' | 'deterministic-only' | 'hybrid-deterministic-and-gemini' | string;
 }
 
 interface GeminiSynthesisPayload {
@@ -41,6 +43,7 @@ interface GeminiSynthesisPayload {
 
 interface AiExplainState {
   status: 'idle' | 'loading' | 'ready' | 'unconfigured' | 'error';
+  isStaticHost?: boolean;
   model?: string;
   message?: string;
   synthesis?: GeminiSynthesisPayload;
@@ -98,14 +101,39 @@ export const DecisionAssistantPanel: React.FC<{
     if (initialSku) setFocusedSku(initialSku);
   }, [initialSku]);
 
-  // Query server capability without exposing any secrets
+  const staticHostDetected = useMemo(
+    () =>
+      isStaticHostingEnvironment({
+        viteStaticOnly: import.meta.env.VITE_STATIC_ONLY,
+        hostname: typeof window !== 'undefined' ? window.location.hostname : '',
+        protocol: typeof window !== 'undefined' ? window.location.protocol : '',
+      }),
+    []
+  );
+
+  // Query server capability without exposing any secrets (skip probe on static/GitHub Pages hosts)
   useEffect(() => {
+    if (staticHostDetected) {
+      setBackendStatus({
+        geminiConfigured: false,
+        model: 'gemini-4-hydrogen',
+        engineMode: 'static-only',
+      });
+      setStatusLoading(false);
+      return;
+    }
     let cancelled = false;
     setStatusLoading(true);
     fetch(`${import.meta.env.BASE_URL}api/assistant/status`)
       .then(async (res) => {
         const ct = res.headers.get('content-type') || '';
-        if (!res.ok || !ct.includes('application/json')) throw new Error(`Status ${res.status}`);
+        if (!res.ok || !ct.includes('application/json')) {
+          return {
+            geminiConfigured: false,
+            model: 'gemini-4-hydrogen',
+            engineMode: 'static-only',
+          } satisfies GeminiStatusPayload;
+        }
         return (await res.json()) as GeminiStatusPayload;
       })
       .then((data) => {
@@ -118,7 +146,7 @@ export const DecisionAssistantPanel: React.FC<{
           setBackendStatus({
             geminiConfigured: false,
             model: 'gemini-4-hydrogen',
-            engineMode: 'deterministic-only',
+            engineMode: 'static-only',
           });
         }
       })
@@ -128,7 +156,7 @@ export const DecisionAssistantPanel: React.FC<{
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [staticHostDetected]);
 
   const assistantCtx = useMemo(
     () =>
@@ -156,72 +184,95 @@ export const DecisionAssistantPanel: React.FC<{
     ]
   );
 
-  const requestGeminiSynthesis = useCallback(async (resp: AssistantResponse) => {
-    setAiByResponseId((prev) => ({
-      ...prev,
-      [resp.id]: { status: 'loading' },
-    }));
-    try {
-      const httpRes = await fetch(`${import.meta.env.BASE_URL}api/assistant/explain`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: resp.question,
-          groundingDossier: resp.groundingDossier,
-        }),
-      });
-      const ct = httpRes.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) {
+  const requestGeminiSynthesis = useCallback(
+    async (resp: AssistantResponse) => {
+      if (staticHostDetected || backendStatus?.engineMode === 'static-only') {
         setAiByResponseId((prev) => ({
           ...prev,
           [resp.id]: {
             status: 'unconfigured',
-            message:
-              'Static hosting detected (no /api/assistant backend). Deterministic FactoryMind outputs remain active and authoritative.',
+            isStaticHost: true,
+            message: STATIC_AI_UNAVAILABLE_NOTICE,
           },
         }));
         return;
       }
-      const payload = (await httpRes.json()) as {
-        code?: string;
-        error?: string;
-        model?: string;
-        synthesis?: GeminiSynthesisPayload;
-      };
-      if (!httpRes.ok) {
-        const isMissingKey = payload.code === 'GEMINI_NOT_CONFIGURED';
+
+      setAiByResponseId((prev) => ({
+        ...prev,
+        [resp.id]: { status: 'loading' },
+      }));
+      try {
+        const httpRes = await fetch(`${import.meta.env.BASE_URL}api/assistant/explain`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: resp.question,
+            groundingDossier: resp.groundingDossier,
+          }),
+        });
+        const ct = httpRes.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) {
+          setBackendStatus({
+            geminiConfigured: false,
+            model: 'gemini-4-hydrogen',
+            engineMode: 'static-only',
+          });
+          setAiByResponseId((prev) => ({
+            ...prev,
+            [resp.id]: {
+              status: 'unconfigured',
+              isStaticHost: true,
+              message: STATIC_AI_UNAVAILABLE_NOTICE,
+            },
+          }));
+          return;
+        }
+        const payload = (await httpRes.json()) as {
+          code?: string;
+          error?: string;
+          model?: string;
+          synthesis?: GeminiSynthesisPayload;
+        };
+        if (!httpRes.ok) {
+          const isMissingKey = payload.code === 'GEMINI_NOT_CONFIGURED';
+          setAiByResponseId((prev) => ({
+            ...prev,
+            [resp.id]: {
+              status: isMissingKey ? 'unconfigured' : 'error',
+              message:
+                payload.error ||
+                'Server AI synthesis is unavailable. Deterministic FactoryMind outputs remain authoritative.',
+            },
+          }));
+          return;
+        }
+        if (!payload.synthesis) {
+          throw new Error('Malformed server synthesis payload.');
+        }
         setAiByResponseId((prev) => ({
           ...prev,
           [resp.id]: {
-            status: isMissingKey ? 'unconfigured' : 'error',
-            message:
-              payload.error ||
-              'Server AI synthesis is unavailable. Deterministic FactoryMind outputs remain authoritative.',
+            status: 'ready',
+            model: payload.model || 'gemini-4-hydrogen',
+            synthesis: payload.synthesis,
           },
         }));
-        return;
+      } catch (err) {
+        setAiByResponseId((prev) => ({
+          ...prev,
+          [resp.id]: {
+            status: 'error',
+            message:
+              err instanceof Error
+                ? `${err.message}. Deterministic FactoryMind analysis remains active.`
+                : 'Unable to reach AI explanation endpoint. Deterministic FactoryMind analysis remains active.',
+          },
+        }));
       }
-      if (!payload.synthesis) {
-        throw new Error('Malformed server synthesis payload.');
-      }
-      setAiByResponseId((prev) => ({
-        ...prev,
-        [resp.id]: {
-          status: 'ready',
-          model: payload.model || 'gemini-4-hydrogen',
-          synthesis: payload.synthesis,
-        },
-      }));
-    } catch (err) {
-      setAiByResponseId((prev) => ({
-        ...prev,
-        [resp.id]: {
-          status: 'error',
-          message: err instanceof Error ? err.message : 'Unable to reach AI explanation endpoint.',
-        },
-      }));
-    }
-  }, []);
+    },
+    [backendStatus?.engineMode, staticHostDetected]
+  );
 
   const submitQuestion = useCallback(
     (qText: string) => {
@@ -324,7 +375,9 @@ export const DecisionAssistantPanel: React.FC<{
                 ? 'Checking Gemini server...'
                 : backendStatus?.geminiConfigured
                   ? `Server AI Ready (${backendStatus.model})`
-                  : 'Deterministic-Only Mode (No Server API Key)'}
+                  : backendStatus?.engineMode === 'static-only'
+                    ? 'Static Hosting · AI Synthesis Unavailable (Deterministic Active)'
+                    : 'Deterministic-Only Mode (No Server API Key)'}
             </span>
           </div>
         }
@@ -464,6 +517,11 @@ export const DecisionAssistantPanel: React.FC<{
                   variant="secondary"
                   onClick={() => void requestGeminiSynthesis(activeResponse)}
                   disabled={activeAiState.status === 'loading'}
+                  title={
+                    backendStatus?.engineMode === 'static-only'
+                      ? 'AI narrative synthesis is unavailable on static hosting — click for details'
+                      : undefined
+                  }
                   className="whitespace-nowrap shrink-0"
                 >
                   {activeAiState.status === 'loading' ? (
@@ -471,7 +529,11 @@ export const DecisionAssistantPanel: React.FC<{
                   ) : (
                     <Sparkles className="h-3.5 w-3.5" />
                   )}
-                  {activeAiState.status === 'ready' ? 'Refresh Gemini Synthesis' : 'Synthesize with Gemini'}
+                  {backendStatus?.engineMode === 'static-only'
+                    ? 'AI Synthesis Unavailable (Static)'
+                    : activeAiState.status === 'ready'
+                      ? 'Refresh Gemini Synthesis'
+                      : 'Synthesize with Gemini'}
                 </Button>
               }
             >
@@ -546,9 +608,11 @@ export const DecisionAssistantPanel: React.FC<{
                     {(activeAiState.status === 'unconfigured' || activeAiState.status === 'error') && (
                       <div className="text-xs text-slate-600 dark:text-slate-300 space-y-1">
                         <div className="font-semibold text-slate-800 dark:text-slate-100">
-                          {activeAiState.status === 'unconfigured'
-                            ? 'Server-Side Gemini API Not Configured — Deterministic Engine Mode Active'
-                            : 'Gemini Explanation Temporarily Unavailable'}
+                          {activeAiState.isStaticHost
+                            ? 'AI Narrative Synthesis Unavailable on Static Hosting'
+                            : activeAiState.status === 'unconfigured'
+                              ? 'Server-Side Gemini API Not Configured — Deterministic Engine Mode Active'
+                              : 'Gemini Explanation Temporarily Unavailable'}
                         </div>
                         <p>{activeAiState.message}</p>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400">

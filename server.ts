@@ -10,12 +10,17 @@ const __dirname = path.dirname(__filename);
 const GEMINI_MODEL = 'gemini-4-hydrogen';
 const PORT = Number(process.env.PORT || 3000);
 
-function getConfiguredApiKey(): string | null {
+export function getConfiguredApiKey(): string | null {
   const raw = (process.env.GEMINI_API_KEY || '').trim();
   if (!raw || raw === 'MY_GEMINI_API_KEY' || raw === 'YOUR_API_KEY') {
     return null;
   }
   return raw;
+}
+
+export interface CreateAppOptions {
+  rateLimitMax?: number;
+  rateLimitWindowMs?: number;
 }
 
 interface GroundingFactInput {
@@ -106,9 +111,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function createApp() {
+export function createApp(options: CreateAppOptions = {}) {
   const app = express();
   app.use(express.json({ limit: '512kb' }));
+
+  const rateLimitMax = Math.max(1, options.rateLimitMax ?? 20);
+  const rateLimitWindowMs = Math.max(1000, options.rateLimitWindowMs ?? 60_000);
+  const hitsByIp = new Map<string, number[]>();
 
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ ok: true, model: GEMINI_MODEL });
@@ -124,6 +133,25 @@ function createApp() {
   });
 
   app.post('/api/assistant/explain', async (req: Request, res: Response) => {
+    const clientIp = req.ip || req.socket?.remoteAddress || 'unknown';
+    const now = Date.now();
+    const recent = (hitsByIp.get(clientIp) || []).filter((ts) => now - ts < rateLimitWindowMs);
+    if (recent.length >= rateLimitMax) {
+      res.status(429).json({
+        code: 'RATE_LIMITED',
+        retryable: true,
+        error: 'Too many AI synthesis requests. Please wait a moment before retrying; deterministic calculations remain available.',
+      });
+      return;
+    }
+    recent.push(now);
+    hitsByIp.set(clientIp, recent);
+    if (hitsByIp.size > 500) {
+      for (const [k, v] of hitsByIp.entries()) {
+        if (!v.some((ts) => now - ts < rateLimitWindowMs)) hitsByIp.delete(k);
+      }
+    }
+
     const apiKey = getConfiguredApiKey();
     if (!apiKey) {
       res.status(503).json({
@@ -306,7 +334,15 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  process.stderr.write(`Failed to start FactoryMind server: ${err instanceof Error ? err.message : String(err)}\n`);
-  process.exit(1);
-});
+const isDirectRun =
+  typeof process !== 'undefined' &&
+  Array.isArray(process.argv) &&
+  Boolean(process.argv[1]) &&
+  path.resolve(process.argv[1]) === path.resolve(__filename);
+
+if (isDirectRun) {
+  startServer().catch((err) => {
+    process.stderr.write(`Failed to start FactoryMind server: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  });
+}
