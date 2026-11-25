@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { LineChart } from '../components/charts/Charts';
-import { AssumptionPanel, Button, Field, Input, Panel, SegmentedControl, Select, StatCard } from '../components/ui/Primitives';
+import { AssumptionPanel, Button, ErrorBanner, Field, Input, Panel, SegmentedControl, Select, StatCard } from '../components/ui/Primitives';
 import { clampNumericInput, fmtInt, fmtMoney, fmtNum } from '../engine/formatters';
 import { DiscountTierInput, eoq, epq, epqProfile, quantityDiscount, rop, totalCostAtQ } from '../engine/ipe';
 import { useStore } from '../store/StoreContext';
@@ -39,26 +39,28 @@ export const EoqPage: React.FC = () => {
       return;
     }
     if (p.id !== selectedId) setSelectedId(p.id);
-    setAnnualDemand(p.annualDemand || 1200);
-    setOrderCost(p.orderCost || 50);
-    setUnitCost(p.unitCost || 10);
-    setHoldingRate(p.holdingRate || 20);
-    setLeadTime(p.leadTime || 7);
-    setServiceLevel(p.serviceLevel || 95);
-    setProdRate(Math.max(2400, Math.round((p.annualDemand || 1200) * 3)));
+    const nextDemand = p.annualDemand ?? 1200;
+    setAnnualDemand(nextDemand);
+    setOrderCost(p.orderCost ?? 50);
+    setUnitCost(p.unitCost ?? 10);
+    setHoldingRate(p.holdingRate ?? 20);
+    setLeadTime(p.leadTime ?? 7);
+    setServiceLevel(p.serviceLevel ?? 95);
+    setProdRate(Math.max(2400, Math.round(nextDemand * 3)));
   }, [products, selectedId]);
 
   const selectSku = (id: string) => {
     setSelectedId(id);
     const p = products.find((x) => x.id === id);
     if (p) {
-      setAnnualDemand(p.annualDemand || 1200);
-      setOrderCost(p.orderCost || 50);
-      setUnitCost(p.unitCost || 10);
-      setHoldingRate(p.holdingRate || 20);
-      setLeadTime(p.leadTime || 7);
-      setServiceLevel(p.serviceLevel || 95);
-      setProdRate(Math.max(2400, Math.round((p.annualDemand || 1200) * 3)));
+      const nextDemand = p.annualDemand ?? 1200;
+      setAnnualDemand(nextDemand);
+      setOrderCost(p.orderCost ?? 50);
+      setUnitCost(p.unitCost ?? 10);
+      setHoldingRate(p.holdingRate ?? 20);
+      setLeadTime(p.leadTime ?? 7);
+      setServiceLevel(p.serviceLevel ?? 95);
+      setProdRate(Math.max(2400, Math.round(nextDemand * 3)));
     }
   };
 
@@ -159,17 +161,17 @@ export const EoqPage: React.FC = () => {
 
       {/* Parameter Panel */}
       <Panel title="Model parameters" subtitle="Load any catalogue SKU or tweak parameters interactively">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <Field label="Annual demand (D)">
             <Input type="number" min="1" max="10000000" value={annualDemand} onChange={(e) => setAnnualDemand(clampNumericInput(e.target.value, 1, 1, 10000000))} />
           </Field>
-          <Field label={tab === 'epq' ? 'Setup cost (S)' : 'Order cost (S)'}>
+          <Field label={tab === 'epq' ? 'Setup cost (S)' : 'Order cost (S)'} termKey="orderCost">
             <Input type="number" min="0.1" max="1000000" step="0.5" value={orderCost} onChange={(e) => setOrderCost(clampNumericInput(e.target.value, 50, 0.1, 1000000))} />
           </Field>
           <Field label="Unit cost ($)">
             <Input type="number" min="0.01" max="1000000" step="0.1" value={unitCost} onChange={(e) => setUnitCost(clampNumericInput(e.target.value, 10, 0.01, 1000000))} />
           </Field>
-          <Field label="Holding rate (%/yr)">
+          <Field label="Holding rate (%/yr)" termKey="holdingRate">
             <Input type="number" min="0.5" max="200" step="0.5" value={holdingRate} onChange={(e) => setHoldingRate(clampNumericInput(e.target.value, 20, 0.5, 200))} />
           </Field>
           {tab === 'eoq' && (
@@ -177,13 +179,17 @@ export const EoqPage: React.FC = () => {
               <Field label="Lead time (days)">
                 <Input type="number" min="0" max="365" value={leadTime} onChange={(e) => setLeadTime(clampNumericInput(e.target.value, 0, 0, 365))} />
               </Field>
-              <Field label="Service level (%)">
+              <Field label="Service level (%)" termKey="serviceLevel">
                 <Input type="number" min="50" max="99.9" step="0.5" value={serviceLevel} onChange={(e) => setServiceLevel(clampNumericInput(e.target.value, 95, 50, 99.9))} />
               </Field>
             </>
           )}
           {tab === 'epq' && (
-            <Field label="Production rate p (/yr)" hint="Must exceed D">
+            <Field
+              label="Production rate p (/yr)"
+              hint="Must exceed D"
+              error={prodRate <= annualDemand ? `Must exceed annual demand (${fmtInt(annualDemand)}).` : undefined}
+            >
               <Input type="number" min="1" max="100000000" value={prodRate} onChange={(e) => setProdRate(clampNumericInput(e.target.value, 2400, 1, 100000000))} />
             </Field>
           )}
@@ -194,14 +200,12 @@ export const EoqPage: React.FC = () => {
       {tab === 'eoq' && (
         <>
           {!eoqRes.valid ? (
-            <Panel title="Invalid parameters">
-              <p className="text-xs text-rose-600 dark:text-rose-400">{eoqRes.reason}</p>
-            </Panel>
+            <ErrorBanner title="Invalid EOQ parameters" message={eoqRes.reason || 'Ensure demand, costs, and holding rate are positive.'} />
           ) : (
             <>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
-                <StatCard label="Optimal order qty (EOQ)" value={fmtInt(eoqRes.Q)} sub={`${fmtNum(eoqRes.ordersPerYear, 1)} orders/yr`} tone="good" />
-                <StatCard label="Reorder point (ROP)" value={fmtInt(ropRes.rop)} sub={`Safety stock ${fmtInt(ropRes.safetyStock)} (${ropRes.sigmaSource})`} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                <StatCard label="Optimal order qty (EOQ)" termKey="eoq" value={fmtInt(eoqRes.Q)} sub={`${fmtNum(eoqRes.ordersPerYear, 1)} orders/yr`} tone="good" />
+                <StatCard label="Reorder point (ROP)" termKey="rop" value={fmtInt(ropRes.rop)} sub={`Safety stock ${fmtInt(ropRes.safetyStock)} (${ropRes.sigmaSource})`} />
                 <StatCard label="Cycle length" value={`${fmtNum(eoqRes.cycleDays, 1)} days`} sub={`Daily demand ${fmtNum(ropRes.dBar, 1)}`} />
                 <StatCard label="Annual variable cost" value={fmtMoney(eoqRes.variableCost)} sub={`Order ${fmtMoney(eoqRes.orderingCost)} + Hold ${fmtMoney(eoqRes.holdingCost)}`} />
               </div>
@@ -227,13 +231,11 @@ export const EoqPage: React.FC = () => {
       {tab === 'epq' && (
         <>
           {!epqRes.valid ? (
-            <Panel title="Invalid EPQ parameters">
-              <p className="text-xs text-rose-600 dark:text-rose-400">{epqRes.reason}</p>
-            </Panel>
+            <ErrorBanner title="Invalid EPQ parameters" message={epqRes.reason || 'Production rate p must strictly exceed annual demand D.'} />
           ) : (
             <>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
-                <StatCard label="Optimal batch qty (EPQ)" value={fmtInt(epqRes.Q)} sub={`${fmtNum(epqRes.runsPerYear, 1)} runs/yr`} tone="good" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                <StatCard label="Optimal batch qty (EPQ)" termKey="epq" value={fmtInt(epqRes.Q)} sub={`${fmtNum(epqRes.runsPerYear, 1)} runs/yr`} tone="good" />
                 <StatCard label="Max inventory (Imax)" value={fmtInt(epqRes.maxInventory)} sub={`Utilization ρ = D/p = ${fmtNum(epqRes.rho * 100, 1)}%`} />
                 <StatCard label="Production run length" value={`${fmtNum(epqRes.runDays, 1)} days`} sub={`Total cycle ${fmtNum(epqRes.cycleDays, 1)} days`} />
                 <StatCard label="Annual variable cost" value={fmtMoney(epqRes.variableCost)} sub={`Setup ${fmtMoney(epqRes.setupCost)} + Hold ${fmtMoney(epqRes.holdingCost)}`} />
@@ -269,41 +271,43 @@ export const EoqPage: React.FC = () => {
               </Button>
             }
           >
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               {tiers.map((t, i) => (
-                <div key={i} className="grid grid-cols-12 gap-2 items-end">
-                  <div className="col-span-5">
-                    <Field label={i === 0 ? 'Min qty' : ''}>
+                <div key={i} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end pb-2.5 sm:pb-0 border-b sm:border-b-0 border-slate-100 dark:border-slate-800 last:border-b-0">
+                  <div className="sm:col-span-5">
+                    <Field label={i === 0 ? 'Min qty' : `Tier ${i + 1} min qty`}>
                       <Input
                         type="number"
-                        min="0"
+                        min="1"
+                        max="10000000"
                         value={t.minQty}
                         onChange={(e) => {
-                          const v = Number(e.target.value);
+                          const v = clampNumericInput(e.target.value, t.minQty, 1, 10000000, true);
                           setTiers((prev) => prev.map((x, idx) => (idx === i ? { ...x, minQty: v } : x)));
                         }}
                       />
                     </Field>
                   </div>
-                  <div className="col-span-4">
-                    <Field label={i === 0 ? 'Discount %' : ''}>
+                  <div className="sm:col-span-4">
+                    <Field label={i === 0 ? 'Discount %' : 'Discount %'}>
                       <Input
                         type="number"
                         min="0"
-                        max="90"
+                        max="95"
                         step="0.5"
                         value={t.discountPct}
                         onChange={(e) => {
-                          const v = Number(e.target.value);
+                          const v = clampNumericInput(e.target.value, t.discountPct, 0, 95);
                           setTiers((prev) => prev.map((x, idx) => (idx === i ? { ...x, discountPct: v } : x)));
                         }}
                       />
                     </Field>
                   </div>
-                  <div className="col-span-3 text-right">
+                  <div className="sm:col-span-3 sm:text-right">
                     <Button
                       size="sm"
                       variant="ghost"
+                      className="w-full sm:w-auto"
                       disabled={tiers.length <= 1}
                       onClick={() => setTiers((prev) => prev.filter((_, idx) => idx !== i))}
                     >
@@ -320,50 +324,98 @@ export const EoqPage: React.FC = () => {
             subtitle={
               discountRes.valid && discountRes.best
                 ? `Optimal tier: Q = ${fmtInt(discountRes.best.Q)} (${discountRes.best.discountPct}% off) · saves ${fmtMoney(discountRes.savings)}/yr vs base`
-                : discountRes.reason
+                : 'Resolve invalid parameters or tier definitions below'
             }
             className="lg:col-span-7"
           >
-            {discountRes.valid && (
-              <div className="overflow-x-auto -mx-4 px-4">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-200 dark:border-slate-800 text-left text-[11px] text-slate-500">
-                      <th className="pb-2 font-medium">Min qty</th>
-                      <th className="pb-2 font-medium text-right">Discount</th>
-                      <th className="pb-2 font-medium text-right">Unit price</th>
-                      <th className="pb-2 font-medium text-right">Tier EOQ</th>
-                      <th className="pb-2 font-medium text-right">Order Q*</th>
-                      <th className="pb-2 font-medium text-right">Total annual cost</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
-                    {discountRes.rows.map((r, i) => {
-                      const isBest = i === discountRes.bestIndex;
-                      return (
-                        <tr
-                          key={i}
-                          className={isBest ? 'bg-emerald-50/70 dark:bg-emerald-950/30 font-medium' : ''}
-                        >
-                          <td className="py-2.5 pr-3 font-mono tabular-nums">
-                            {fmtInt(r.minQty)}
-                            {isBest && <span className="ml-2 text-emerald-600 dark:text-emerald-400">Optimal</span>}
-                          </td>
-                          <td className="py-2.5 pr-3 text-right font-mono tabular-nums">{fmtNum(r.discountPct, 1)}%</td>
-                          <td className="py-2.5 pr-3 text-right font-mono tabular-nums">{fmtMoney(r.price, 2)}</td>
-                          <td className="py-2.5 pr-3 text-right font-mono tabular-nums text-slate-500">
-                            {fmtInt(r.qEoq)} {r.eoqFeasible ? '✓' : '↑'}
-                          </td>
-                          <td className="py-2.5 pr-3 text-right font-mono tabular-nums">{fmtInt(r.Q)}</td>
-                          <td className="py-2.5 text-right font-mono tabular-nums font-semibold">
-                            {fmtMoney(r.totalCost)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+            {!discountRes.valid ? (
+              <ErrorBanner
+                title="Invalid discount break schedule"
+                message={discountRes.reason || 'Verify annual demand, costs, positive break quantities, and discounts below 100%.'}
+              />
+            ) : (
+              <>
+                <div className="md:hidden space-y-2">
+                  {discountRes.rows.map((r, i) => {
+                    const isBest = i === discountRes.bestIndex;
+                    return (
+                      <div
+                        key={i}
+                        className={`rounded-lg border p-3 space-y-1.5 text-xs ${
+                          isBest
+                            ? 'border-emerald-300 dark:border-emerald-700 bg-emerald-50/60 dark:bg-emerald-950/30'
+                            : 'border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 font-mono">
+                          <span className="font-semibold text-slate-900 dark:text-slate-100">
+                            Min {fmtInt(r.minQty)} units ({fmtNum(r.discountPct, 1)}% off)
+                          </span>
+                          {isBest && (
+                            <span className="text-[11px] font-sans font-semibold text-emerald-700 dark:text-emerald-400">
+                              Optimal
+                            </span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-[11px] font-mono tabular-nums pt-1 border-t border-slate-200/70 dark:border-slate-800">
+                          <div>
+                            <span className="block font-sans text-slate-600 dark:text-slate-300">Unit price</span>
+                            <span>{fmtMoney(r.price, 2)}</span>
+                          </div>
+                          <div>
+                            <span className="block font-sans text-slate-600 dark:text-slate-300">Order Q*</span>
+                            <span>{fmtInt(r.Q)}</span>
+                          </div>
+                          <div>
+                            <span className="block font-sans text-slate-600 dark:text-slate-300">Annual cost</span>
+                            <span className="font-semibold">{fmtMoney(r.totalCost)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="hidden md:block overflow-x-auto -mx-4 px-4">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 dark:border-slate-800 text-left text-[11px] text-slate-600 dark:text-slate-300">
+                        <th scope="col" className="pb-2 font-medium">Min qty</th>
+                        <th scope="col" className="pb-2 font-medium text-right">Discount</th>
+                        <th scope="col" className="pb-2 font-medium text-right">Unit price</th>
+                        <th scope="col" className="pb-2 font-medium text-right">Tier EOQ</th>
+                        <th scope="col" className="pb-2 font-medium text-right">Order Q*</th>
+                        <th scope="col" className="pb-2 font-medium text-right">Total annual cost</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                      {discountRes.rows.map((r, i) => {
+                        const isBest = i === discountRes.bestIndex;
+                        return (
+                          <tr
+                            key={i}
+                            className={isBest ? 'bg-emerald-50/70 dark:bg-emerald-950/30 font-medium' : ''}
+                          >
+                            <td className="py-2.5 pr-3 font-mono tabular-nums">
+                              {fmtInt(r.minQty)}
+                              {isBest && <span className="ml-2 text-emerald-700 dark:text-emerald-400">Optimal</span>}
+                            </td>
+                            <td className="py-2.5 pr-3 text-right font-mono tabular-nums">{fmtNum(r.discountPct, 1)}%</td>
+                            <td className="py-2.5 pr-3 text-right font-mono tabular-nums">{fmtMoney(r.price, 2)}</td>
+                            <td className="py-2.5 pr-3 text-right font-mono tabular-nums text-slate-600 dark:text-slate-300">
+                              {fmtInt(r.qEoq)} {r.eoqFeasible ? '✓' : '↑'}
+                            </td>
+                            <td className="py-2.5 pr-3 text-right font-mono tabular-nums">{fmtInt(r.Q)}</td>
+                            <td className="py-2.5 text-right font-mono tabular-nums font-semibold">
+                              {fmtMoney(r.totalCost)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </Panel>
         </div>

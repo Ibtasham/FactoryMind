@@ -1,8 +1,149 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
-import { AlertTriangle, ChevronDown, ChevronUp, Info, X } from 'lucide-react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { AlertTriangle, ArrowRight, ChevronDown, ChevronUp, Compass, HelpCircle, Info, X } from 'lucide-react';
 import { StockStatus } from '../../engine/ipe';
-import { DatasetProvenance, MODEL_ASSUMPTIONS } from '../../engine/uxHelpers';
+import {
+  DatasetProvenance,
+  ENGINEERING_GLOSSARY,
+  EngineeringTermKey,
+  getRelatedModules,
+  MODEL_ASSUMPTIONS,
+} from '../../engine/uxHelpers';
 import { ToastMessage } from '../../store/StoreContext';
+
+export const TermTooltip: React.FC<{
+  termKey?: EngineeringTermKey;
+  label?: string;
+  formula?: string;
+  description?: string;
+  align?: 'inline' | 'badge';
+}> = ({ termKey, label, formula, description, align = 'inline' }) => {
+  const spec = termKey ? ENGINEERING_GLOSSARY[termKey] : null;
+  const title = label || spec?.term || '';
+  const eq = formula ?? spec?.formula;
+  const body = description || spec?.definition || '';
+  const [hoverOpen, setHoverOpen] = useState(false);
+  const [pinnedOpen, setPinnedOpen] = useState(false);
+  const open = hoverOpen || pinnedOpen;
+  const [coords, setCoords] = useState<{ top: number; left: number; placement: 'top' | 'bottom' }>({
+    top: 0,
+    left: 12,
+    placement: 'bottom',
+  });
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const tipId = useId();
+
+  const updatePos = useCallback(() => {
+    const el = btnRef.current;
+    if (!el || typeof window === 'undefined') return;
+    const rect = el.getBoundingClientRect();
+    const width = Math.min(288, window.innerWidth - 24);
+    const left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.left + rect.width / 2 - width / 2));
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const placement: 'top' | 'bottom' = spaceBelow < 150 && rect.top > 150 ? 'top' : 'bottom';
+    const top = placement === 'bottom' ? rect.bottom + 8 : rect.top - 8;
+    setCoords({ top, left, placement });
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    updatePos();
+    const onPointer = (e: MouseEvent) => {
+      if (btnRef.current && !btnRef.current.contains(e.target as Node)) {
+        setHoverOpen(false);
+        setPinnedOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setHoverOpen(false);
+        setPinnedOpen(false);
+      }
+    };
+    const onScrollOrResize = () => updatePos();
+    window.addEventListener('mousedown', onPointer);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', onScrollOrResize, true);
+    window.addEventListener('resize', onScrollOrResize);
+    return () => {
+      window.removeEventListener('mousedown', onPointer);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onScrollOrResize, true);
+      window.removeEventListener('resize', onScrollOrResize);
+    };
+  }, [open, updatePos]);
+
+  if (!body && !title) return null;
+
+  return (
+    <span className="relative inline-flex items-center align-middle">
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label={`Explain ${title || 'engineering term'}`}
+        aria-expanded={open}
+        aria-describedby={open ? tipId : undefined}
+        onClick={(e) => {
+          e.stopPropagation();
+          updatePos();
+          if (pinnedOpen) {
+            setPinnedOpen(false);
+            setHoverOpen(false);
+          } else {
+            setPinnedOpen(true);
+          }
+        }}
+        onMouseEnter={() => {
+          updatePos();
+          setHoverOpen(true);
+        }}
+        onMouseLeave={() => setHoverOpen(false)}
+        onFocus={(e) => {
+          if (e.currentTarget.matches(':focus-visible')) {
+            updatePos();
+            setHoverOpen(true);
+          }
+        }}
+        onBlur={() => {
+          setHoverOpen(false);
+          setPinnedOpen(false);
+        }}
+        className={`inline-flex items-center justify-center rounded-full text-slate-600 dark:text-slate-300 hover:text-[var(--accent)] focus-visible:text-[var(--accent)] transition-colors cursor-help ${
+          align === 'badge' ? 'h-5 w-5' : 'h-5 w-5 -my-1'
+        }`}
+      >
+        <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
+      {open && (
+        <span
+          id={tipId}
+          role="tooltip"
+          style={{
+            position: 'fixed',
+            top: coords.top,
+            left: coords.left,
+            width: 'min(288px, calc(100vw - 24px))',
+            transform: coords.placement === 'top' ? 'translateY(-100%)' : 'none',
+          }}
+          className="z-[90] pointer-events-none rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2.5 text-left shadow-xl"
+        >
+          {title && (
+            <span className="block text-[11px] font-semibold text-slate-900 dark:text-slate-100">
+              {title}
+            </span>
+          )}
+          {eq && (
+            <span className="mt-1 block rounded bg-slate-100 dark:bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] text-[var(--accent)] break-words">
+              {eq}
+            </span>
+          )}
+          <span className="mt-1 block text-[11px] leading-relaxed font-normal text-slate-600 dark:text-slate-300">
+            {body}
+          </span>
+        </span>
+      )}
+    </span>
+  );
+};
 
 export const Panel: React.FC<{
   title?: string;
@@ -23,7 +164,7 @@ export const Panel: React.FC<{
         {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
       </header>
     )}
-    <div className="p-4">{children}</div>
+    <div className="p-3.5 sm:p-4">{children}</div>
   </section>
 );
 
@@ -32,7 +173,9 @@ export const StatCard: React.FC<{
   value: string;
   sub?: string;
   tone?: 'neutral' | 'good' | 'warn' | 'bad';
-}> = ({ label, value, sub, tone = 'neutral' }) => {
+  termKey?: EngineeringTermKey;
+  tooltip?: string;
+}> = ({ label, value, sub, tone = 'neutral', termKey, tooltip }) => {
   const toneCls =
     tone === 'good'
       ? 'text-emerald-700 dark:text-emerald-400'
@@ -44,11 +187,16 @@ export const StatCard: React.FC<{
 
   return (
     <div className="rounded-xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-slate-900/85 px-4 py-3.5 shadow-xs hover:border-slate-300 dark:hover:border-slate-700 transition-colors">
-      <div className="text-xs font-medium text-slate-600 dark:text-slate-300">{label}</div>
-      <div className="mt-1 text-xl font-semibold font-mono tabular-nums text-slate-900 dark:text-slate-50">
+      <div className="flex items-center justify-between gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">
+        <span className="truncate">{label}</span>
+        {(termKey || tooltip) && (
+          <TermTooltip termKey={termKey} label={tooltip ? label : undefined} description={tooltip} />
+        )}
+      </div>
+      <div className="mt-1 text-lg sm:text-xl font-semibold font-mono tabular-nums text-slate-900 dark:text-slate-50 break-words">
         {value}
       </div>
-      {sub && <div className={`mt-1 text-xs font-mono tabular-nums ${toneCls}`}>{sub}</div>}
+      {sub && <div className={`mt-1 text-xs font-mono tabular-nums leading-snug ${toneCls}`}>{sub}</div>}
     </div>
   );
 };
@@ -78,7 +226,7 @@ export const SegmentedControl: React.FC<{
   <div
     role="tablist"
     aria-label={ariaLabel}
-    className="inline-flex flex-wrap rounded-md border border-slate-200 dark:border-slate-800 bg-slate-100/80 dark:bg-slate-950/60 p-0.5"
+    className="inline-flex flex-wrap max-w-full rounded-md border border-slate-200 dark:border-slate-800 bg-slate-100/80 dark:bg-slate-950/60 p-0.5 gap-0.5"
   >
     {options.map((opt) => {
       const active = opt.value === value;
@@ -89,7 +237,7 @@ export const SegmentedControl: React.FC<{
           role="tab"
           aria-selected={active}
           onClick={() => onChange(opt.value)}
-          className={`px-3 py-1.5 text-xs font-medium rounded-[4px] transition-colors cursor-pointer ${
+          className={`px-2.5 sm:px-3 py-1.5 min-h-[34px] sm:min-h-0 text-xs font-medium rounded-[4px] transition-colors cursor-pointer ${
             active
               ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs'
               : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
@@ -110,7 +258,10 @@ export const Button: React.FC<
 > = ({ variant = 'secondary', size = 'md', className = '', children, ...props }) => {
   const base =
     'inline-flex items-center justify-center gap-1.5 font-medium rounded-md transition-colors disabled:opacity-45 disabled:pointer-events-none cursor-pointer';
-  const sz = size === 'sm' ? 'px-2.5 py-1.5 text-xs' : 'px-3.5 py-2 text-xs';
+  const sz =
+    size === 'sm'
+      ? 'px-2.5 py-1.5 min-h-[34px] sm:min-h-0 text-xs'
+      : 'px-3.5 py-2 min-h-[38px] sm:min-h-0 text-xs';
   const vr =
     variant === 'primary'
       ? 'text-white bg-[var(--accent)] hover:opacity-90'
@@ -131,17 +282,24 @@ export const Field: React.FC<{
   hint?: string;
   error?: string;
   htmlFor?: string;
+  termKey?: EngineeringTermKey;
+  tooltip?: string;
   children: React.ReactNode;
-}> = ({ label, hint, error, htmlFor, children }) => {
+}> = ({ label, hint, error, htmlFor, termKey, tooltip, children }) => {
   const autoId = useId();
   const fieldId = htmlFor || `field-${autoId}`;
   const errorId = `${fieldId}-error`;
   return (
     <div className="space-y-1">
-      <label htmlFor={fieldId} className="flex items-center justify-between text-xs">
-        <span className="font-medium text-slate-700 dark:text-slate-200">{label}</span>
-        {hint && <span className="text-[11px] text-slate-500 dark:text-slate-400">{hint}</span>}
-      </label>
+      <div className="flex items-center justify-between gap-2 text-xs min-h-[18px]">
+        <label htmlFor={fieldId} className="inline-flex items-center gap-1 font-medium text-slate-700 dark:text-slate-200">
+          <span>{label}</span>
+          {(termKey || tooltip) && (
+            <TermTooltip termKey={termKey} label={tooltip ? label : undefined} description={tooltip} />
+          )}
+        </label>
+        {hint && <span className="text-[11px] text-slate-600 dark:text-slate-300 shrink-0">{hint}</span>}
+      </div>
       {React.isValidElement(children)
         ? React.cloneElement(children as React.ReactElement<Record<string, unknown>>, {
             id: (children.props as Record<string, unknown>).id || fieldId,
@@ -164,7 +322,7 @@ export const Input: React.FC<React.InputHTMLAttributes<HTMLInputElement>> = ({ c
   const hasErr = Boolean(props['aria-invalid']);
   return (
     <input
-      className={`w-full rounded-md border ${
+      className={`w-full rounded-md border min-h-[38px] sm:min-h-[32px] ${
         hasErr
           ? 'border-rose-500 dark:border-rose-400 focus:ring-rose-500/35'
           : 'border-slate-200 dark:border-slate-700 focus:ring-[var(--accent)]/40'
@@ -178,7 +336,7 @@ export const Select: React.FC<React.SelectHTMLAttributes<HTMLSelectElement>> = (
   const hasErr = Boolean(props['aria-invalid']);
   return (
     <select
-      className={`w-full rounded-md border ${
+      className={`w-full rounded-md border min-h-[38px] sm:min-h-[32px] ${
         hasErr
           ? 'border-rose-500 dark:border-rose-400 focus:ring-rose-500/35'
           : 'border-slate-200 dark:border-slate-700 focus:ring-[var(--accent)]/40'
@@ -193,9 +351,9 @@ export const EmptyState: React.FC<{ title: string; message: string; action?: Rea
   message,
   action,
 }) => (
-  <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 p-8 text-center">
+  <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 p-6 sm:p-8 text-center">
     <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</div>
-    <p className="mt-1 text-xs text-slate-600 dark:text-slate-300 max-w-md mx-auto">{message}</p>
+    <p className="mt-1 text-xs text-slate-600 dark:text-slate-300 max-w-md mx-auto leading-relaxed">{message}</p>
     {action && <div className="mt-4">{action}</div>}
   </div>
 );
@@ -213,12 +371,52 @@ export const ErrorBanner: React.FC<{
       <AlertTriangle className="h-4 w-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
       <div className="min-w-0">
         <div className="text-xs font-semibold text-rose-800 dark:text-rose-300">{title}</div>
-        <p className="text-xs text-rose-700 dark:text-rose-300/90 mt-0.5">{message}</p>
+        <p className="text-xs text-rose-700 dark:text-rose-300/90 mt-0.5 leading-relaxed">{message}</p>
       </div>
     </div>
     {action && <div className="shrink-0">{action}</div>}
   </div>
 );
+
+export const RelatedModulesBar: React.FC<{
+  routeId: string;
+  onNavigate: (route: string) => void;
+}> = ({ routeId, onNavigate }) => {
+  const links = getRelatedModules(routeId);
+  if (!links.length) return null;
+  return (
+    <nav
+      aria-label="Related engineering workflows"
+      data-testid="related-modules-bar"
+      className="mt-6 rounded-xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-slate-900/70 p-3.5 sm:p-4 no-print"
+    >
+      <div className="flex items-center gap-2 text-[11px] font-mono uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-2.5">
+        <Compass className="h-3.5 w-3.5 text-[var(--accent)] shrink-0" />
+        <span>Connected Engineering Workflows</span>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+        {links.map((lnk) => (
+          <button
+            key={lnk.route}
+            type="button"
+            onClick={() => onNavigate(lnk.route)}
+            className="group text-left rounded-lg border border-slate-200/80 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/50 hover:border-[var(--accent)]/60 px-3 py-2.5 transition-colors flex items-center justify-between gap-2 cursor-pointer"
+          >
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 group-hover:text-[var(--accent)] transition-colors truncate">
+                {lnk.label}
+              </div>
+              <div className="text-[11px] text-slate-600 dark:text-slate-300 truncate mt-0.5">
+                {lnk.reason}
+              </div>
+            </div>
+            <ArrowRight className="h-3.5 w-3.5 text-slate-400 group-hover:text-[var(--accent)] shrink-0 transition-colors" />
+          </button>
+        ))}
+      </div>
+    </nav>
+  );
+};
 
 export const ModuleSkeleton: React.FC<{ label?: string }> = ({ label = 'Loading engineering module…' }) => (
   <div role="status" aria-label={label} className="space-y-4">
@@ -409,7 +607,7 @@ export const Modal: React.FC<{
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-[2px] p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-[2px] p-2.5 sm:p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -421,15 +619,15 @@ export const Modal: React.FC<{
         aria-labelledby={titleId}
         aria-describedby={subtitle ? descId : undefined}
         tabIndex={-1}
-        className={`w-full ${maxWidth} max-h-[90vh] flex flex-col rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xl focus:outline-none`}
+        className={`w-full ${maxWidth} max-h-[92vh] sm:max-h-[90vh] flex flex-col rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xl focus:outline-none`}
       >
-        <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-slate-100 dark:border-slate-800">
-          <div>
+        <div className="flex items-start justify-between gap-3 px-3.5 sm:px-4 py-3 border-b border-slate-100 dark:border-slate-800 shrink-0">
+          <div className="min-w-0">
             <h3 id={titleId} className="text-sm font-semibold text-slate-900 dark:text-slate-100">
               {title}
             </h3>
             {subtitle && (
-              <p id={descId} className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+              <p id={descId} className="text-xs text-slate-600 dark:text-slate-300 mt-0.5 leading-snug">
                 {subtitle}
               </p>
             )}
@@ -438,12 +636,12 @@ export const Modal: React.FC<{
             type="button"
             onClick={onClose}
             aria-label="Close modal"
-            className="rounded p-1 text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+            className="rounded-md p-1.5 min-h-[34px] min-w-[34px] flex items-center justify-center text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shrink-0"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="overflow-y-auto p-4">{children}</div>
+        <div className="overflow-y-auto p-3.5 sm:p-4">{children}</div>
       </div>
     </div>
   );
@@ -471,7 +669,7 @@ export const ConfirmDialog: React.FC<{
   <Modal open={open} onClose={onClose} title={title} maxWidth="max-w-md">
     <div className="space-y-4">
       <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">{message}</p>
-      <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+      <div className="flex flex-wrap justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
         <Button type="button" variant="ghost" onClick={onClose}>
           {cancelLabel}
         </Button>
@@ -501,7 +699,7 @@ export const ToastContainer: React.FC<{
       role="status"
       aria-live="polite"
       aria-atomic="false"
-      className="fixed bottom-4 right-4 z-[60] flex flex-col gap-2 max-w-sm w-[calc(100%-2rem)] pointer-events-none no-print"
+      className="fixed bottom-3 right-3 sm:bottom-4 sm:right-4 z-[60] flex flex-col gap-2 max-w-sm w-[calc(100%-1.5rem)] sm:w-[calc(100%-2rem)] pointer-events-none no-print"
     >
       {toasts.map((t) => (
         <div

@@ -163,7 +163,7 @@ export function wmaMethod(history: ReadonlyArray<number>, opts: ForecastMethodOp
   const weights = new Array<number>(w);
   let wsum = 0;
   for (let i = 0; i < w; i++) {
-    weights[i] = w - i;
+    weights[i] = i + 1;
     wsum += weights[i];
   }
   for (let i = 0; i < w; i++) weights[i] /= wsum;
@@ -224,7 +224,7 @@ export function holtLinear(history: ReadonlyArray<number>, opts: ForecastMethodO
   let level = H[0];
   let trend = n > 1 ? H[1] - H[0] : 0;
   for (let k = 1; k < n; k++) {
-    fitted[k] = level + trend * (k - 1 > 0 ? 1 : 0);
+    fitted[k] = level + trend;
     const prevLevel = level;
     level = alpha * H[k] + (1 - alpha) * (prevLevel + trend);
     trend = beta * (level - prevLevel) + (1 - beta) * trend;
@@ -255,24 +255,29 @@ export function hwAdditive(history: ReadonlyArray<number>, opts: ForecastMethodO
   const S = new Array<number>(p).fill(0);
   let level = H[0];
   let trend = n > 1 ? H[1] - H[0] : 0;
-  if (n >= p) {
+  if (n >= p * 2) {
     const mean0 = mean(H.slice(0, p));
-    level = mean0;
-    for (let i = 0; i < p; i++) S[i] = H[i] - mean0;
-    if (n >= p * 2) {
-      const mean1 = mean(H.slice(p, p * 2));
-      trend = (mean1 - mean0) / p;
+    const mean1 = mean(H.slice(p, p * 2));
+    trend = (mean1 - mean0) / p;
+    const l0 = mean0 - trend * ((p - 1) / 2);
+    for (let i = 0; i < p; i++) {
+      S[i] = 0.5 * ((H[i] - (l0 + trend * i)) + (H[p + i] - (l0 + trend * (p + i))));
     }
+    const sMean = mean(S);
+    for (let i = 0; i < p; i++) S[i] -= sMean;
+    level = l0 - trend;
+  } else if (n >= p) {
+    const mean0 = mean(H.slice(0, p));
+    trend = 0;
+    for (let i = 0; i < p; i++) S[i] = H[i] - mean0;
+    level = mean0;
   }
   for (let k = 0; k < n; k++) {
-    if (k === 0) {
-      fitted[0] = H[0];
-      continue;
-    }
     const sIdx = ((k % p) + p) % p;
-    fitted[k] = level + trend + S[sIdx];
+    const oneStepLevel = level + trend;
+    fitted[k] = oneStepLevel + S[sIdx];
     const prevLevel = level;
-    level = alpha * (H[k] - S[sIdx]) + (1 - alpha) * (prevLevel + trend);
+    level = alpha * (H[k] - S[sIdx]) + (1 - alpha) * oneStepLevel;
     trend = beta * (level - prevLevel) + (1 - beta) * trend;
     S[sIdx] = gamma * (H[k] - level) + (1 - gamma) * S[sIdx];
   }
@@ -310,22 +315,32 @@ export function hwMultiplicative(history: ReadonlyArray<number>, opts: ForecastM
   const S = new Array<number>(p).fill(1);
   let level = H[0];
   let trend = n > 1 ? H[1] - H[0] : 0;
-  if (n >= p) {
+  if (n >= p * 2) {
     const mean0 = mean(H.slice(0, p));
-    level = mean0 || H[0];
+    const mean1 = mean(H.slice(p, p * 2));
+    trend = (mean1 - mean0) / p;
+    const l0 = mean0 - trend * ((p - 1) / 2);
+    for (let i = 0; i < p; i++) {
+      const denom0 = Math.max(1e-6, l0 + trend * i);
+      const denom1 = Math.max(1e-6, l0 + trend * (p + i));
+      S[i] = 0.5 * (H[i] / denom0 + H[p + i] / denom1);
+    }
+    const fmean = mean(S);
+    if (fmean > 1e-9) for (let i = 0; i < p; i++) S[i] /= fmean;
+    // Refine L0 on deseasonalized Season 0 so initial level matches exact multiplicative trend
+    let deseasonSum = 0;
+    for (let i = 0; i < p; i++) deseasonSum += H[i] / Math.max(1e-6, S[i]) - trend * i;
+    const l0Refined = deseasonSum / p;
+    level = l0Refined - trend;
+  } else if (n >= p) {
+    const mean0 = mean(H.slice(0, p));
+    trend = 0;
     for (let i = 0; i < p; i++) S[i] = H[i] / (mean0 || 1);
     const fmean = mean(S);
     if (fmean > 1e-9) for (let i = 0; i < p; i++) S[i] /= fmean;
-    if (n >= p * 2) {
-      const mean1 = mean(H.slice(p, p * 2));
-      trend = (mean1 - mean0) / p;
-    }
+    level = mean0 || H[0];
   }
   for (let k = 0; k < n; k++) {
-    if (k === 0) {
-      fitted[0] = H[0];
-      continue;
-    }
     const sIdx = k % p;
     const oneStepLevel = level + trend;
     fitted[k] = oneStepLevel * S[sIdx];
@@ -613,20 +628,21 @@ export function accuracyMetrics(
 export function mase(
   forecast: ReadonlyArray<number>,
   actual: ReadonlyArray<number>,
-  period = 12,
+  period = 1,
   train?: ReadonlyArray<number>
 ): number | null {
   const n = Math.min(forecast.length, actual.length);
   if (n === 0) return null;
+  const p = Math.max(1, Math.round(Number(period) || 1));
   let aeMethod = 0;
   for (let i = 0; i < n; i++) aeMethod += Math.abs(forecast[i] - actual[i]);
   const maeMethod = aeMethod / n;
   const ref = Array.isArray(train) && train.length ? train : actual;
-  if (ref.length < period + 2) return null;
+  if (ref.length < p + 1) return null;
   let aeBase = 0;
   let nBase = 0;
-  for (let i = period; i < ref.length; i++) {
-    aeBase += Math.abs(ref[i] - ref[i - period]);
+  for (let i = p; i < ref.length; i++) {
+    aeBase += Math.abs(ref[i] - ref[i - p]);
     nBase++;
   }
   if (nBase === 0) return null;

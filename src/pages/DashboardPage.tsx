@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowRight, BookOpen, Box, Compass, PackageCheck, Plus, Sparkles, X } from 'lucide-react';
+import { ArrowRight, BookOpen, Box, CheckCircle2, Compass, PackageCheck, Plus, Sparkles, X } from 'lucide-react';
 import { DonutChart, LineChart } from '../components/charts/Charts';
 import { DashboardSummaryCard } from '../components/dashboard/DashboardSummaryCard';
 import { SmartAlertsPanel } from '../components/dashboard/SmartAlertsPanel';
@@ -12,15 +12,19 @@ import {
   Panel,
   StatCard,
   StatusLabel,
+  TermTooltip,
 } from '../components/ui/Primitives';
 import { advisorAnalyse, advisorHealth, advisorPolicyFromSettings } from '../engine/advisor';
 import { compactMoney, fmtCover, fmtInt, fmtMoney, fmtNum, relTime, shortDate } from '../engine/formatters';
 import { ASSEMBLY_3D_SPECS, ASSEMBLY_SKU_LIST, AssemblySku } from '../engine/threeSpecs';
-import { computeOnboardingProgress } from '../engine/uxHelpers';
+import { computeOnboardingProgress, ONBOARDING_STEPS } from '../engine/uxHelpers';
+import type { PlantRackProductInput, PlantStationInput } from '../engine/threeModels';
 import { Product } from '../store/store';
 import { useStore } from '../store/StoreContext';
 
 const CAT_COLORS = ['#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#64748b'];
+const EMPTY_PLANT_PRODUCTS: PlantRackProductInput[] = [];
+const EMPTY_PLANT_STATIONS: PlantStationInput[] = [];
 
 export const DashboardPage: React.FC<{
   onNavigate: (r: RouteId) => void;
@@ -122,37 +126,69 @@ export const DashboardPage: React.FC<{
           <section
             aria-label="Getting started checklist"
             data-testid="onboarding-banner"
-            className="rounded-lg border border-slate-200/90 dark:border-slate-800/90 bg-slate-100/60 dark:bg-slate-900/75 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-3"
+            className="rounded-xl border border-slate-200/90 dark:border-slate-800/90 bg-slate-100/60 dark:bg-slate-900/75 px-3.5 py-3 space-y-2.5"
           >
-            <div className="min-w-0">
-              <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 flex flex-wrap items-center gap-2">
-                <span>Workbench Onboarding ({onboardingProgress.completed}/{onboardingProgress.total} workflows explored)</span>
-                <span aria-hidden="true" className="text-slate-400">·</span>
-                <span className="font-mono text-[11px] text-[var(--accent)]">{onboardingProgress.pct}%</span>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 flex flex-wrap items-center gap-2">
+                  <span>Workbench Onboarding ({onboardingProgress.completed}/{onboardingProgress.total} workflows explored)</span>
+                  <span aria-hidden="true" className="text-slate-400">·</span>
+                  <span className="font-mono text-[11px] text-[var(--accent)]">{onboardingProgress.pct}%</span>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                  Explore the core engineering loops below—steps mark complete automatically as you visit each module.
+                </p>
               </div>
-              <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
-                Start with stockout alerts, run a discrete-event production simulation, or compare counterfactuals before applying.
-              </p>
+              <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">
+                {onOpenOnboarding && (
+                  <Button size="sm" variant="primary" onClick={onOpenOnboarding}>
+                    <Compass className="h-3.5 w-3.5" /> Guided Tour
+                  </Button>
+                )}
+                {onOpenHelp && (
+                  <Button size="sm" variant="secondary" onClick={() => onOpenHelp('help-dataset-origin')}>
+                    <BookOpen className="h-3.5 w-3.5" /> Help &amp; Formulas
+                  </Button>
+                )}
+                <button
+                  type="button"
+                  aria-label="Dismiss onboarding banner"
+                  onClick={() => setSetting('onboardingDismissed', true)}
+                  className="p-1.5 min-h-[34px] min-w-[34px] sm:min-h-0 sm:min-w-0 flex items-center justify-center rounded text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
-              {onOpenOnboarding && (
-                <Button size="sm" variant="primary" onClick={onOpenOnboarding}>
-                  <Compass className="h-3.5 w-3.5" /> Guided Tour
-                </Button>
-              )}
-              {onOpenHelp && (
-                <Button size="sm" variant="secondary" onClick={() => onOpenHelp('help-dataset-origin')}>
-                  <BookOpen className="h-3.5 w-3.5" /> Help &amp; Formulas
-                </Button>
-              )}
-              <button
-                type="button"
-                aria-label="Dismiss onboarding banner"
-                onClick={() => setSetting('onboardingDismissed', true)}
-                className="p-1.5 rounded text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-slate-800 cursor-pointer"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+              {ONBOARDING_STEPS.map((step, idx) => {
+                const done = (settings.onboardingCompletedSteps || []).includes(step.id);
+                return (
+                  <button
+                    key={step.id}
+                    type="button"
+                    onClick={() => onNavigate(step.route as RouteId)}
+                    className={`text-left rounded-lg border px-2.5 py-2 transition-colors flex items-center justify-between gap-2 cursor-pointer ${
+                      done
+                        ? 'border-emerald-300/70 dark:border-emerald-800/70 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-900 dark:text-emerald-200'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/60 hover:border-[var(--accent)]/60 text-slate-800 dark:text-slate-200'
+                    }`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block font-mono text-[10px] text-slate-600 dark:text-slate-300">
+                        Step {idx + 1} · {step.ctaLabel}
+                      </span>
+                      <span className="block text-[11px] font-medium truncate">{step.title}</span>
+                    </span>
+                    {done ? (
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    ) : (
+                      <ArrowRight className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </section>
         )}
@@ -165,12 +201,14 @@ export const DashboardPage: React.FC<{
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         <StatCard
           label="Portfolio health"
+          termKey="portfolioHealth"
           value={`${health.score}/100`}
           sub={`${health.label} · ${fmtNum(healthyPct, 0)}% healthy coverage`}
           tone={health.score >= 85 ? 'good' : health.score >= 70 ? 'warn' : 'bad'}
         />
         <StatCard
           label="Excess cash parked"
+          termKey="parkedCash"
           value={fmtMoney(advisor.totals.parkedCash)}
           sub={`Capital above ${policy.cover}-month target cover`}
           tone={advisor.totals.parkedCash > 0 ? 'warn' : 'good'}
@@ -266,53 +304,99 @@ export const DashboardPage: React.FC<{
           }
         >
           {actionQueue.length ? (
-            <div className="overflow-x-auto -mx-4 px-4">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-800 text-left text-[11px] text-slate-600 dark:text-slate-300">
-                    <th scope="col" className="pb-2 font-medium">SKU / Item</th>
-                    <th scope="col" className="pb-2 font-medium">Status</th>
-                    <th scope="col" className="pb-2 font-medium text-right">On hand</th>
-                    <th scope="col" className="pb-2 font-medium text-right">ROP</th>
-                    <th scope="col" className="pb-2 font-medium text-right">EOQ</th>
-                    <th scope="col" className="pb-2 font-medium text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
-                  {actionQueue.map(({ p, m }) => (
-                    <tr key={p.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                      <td className="py-2.5 pr-3">
-                        <button
-                          type="button"
-                          onClick={() => onOpenProduct(p)}
-                          className="text-left hover:text-[var(--accent)] cursor-pointer"
-                        >
-                          <div className="font-medium text-slate-900 dark:text-slate-100">{p.name}</div>
-                          <div className="font-mono text-[11px] text-slate-600 dark:text-slate-300">{p.sku}</div>
-                        </button>
-                      </td>
-                      <td className="py-2.5 pr-3">
-                        <StatusLabel status={m.status} />
-                      </td>
-                      <td className="py-2.5 pr-3 text-right font-mono tabular-nums">
-                        {fmtInt(p.stock)} {p.unit}
-                      </td>
-                      <td className="py-2.5 pr-3 text-right font-mono tabular-nums text-slate-600 dark:text-slate-300">
-                        {fmtInt(m.rop)}
-                      </td>
-                      <td className="py-2.5 pr-3 text-right font-mono tabular-nums text-slate-700 dark:text-slate-200">
-                        {fmtInt(m.suggestedOrderQty)}
-                      </td>
-                      <td className="py-2.5 text-right">
-                        <Button size="sm" variant="secondary" onClick={() => onMoveStock(p, 'in')}>
-                          <PackageCheck className="h-3.5 w-3.5" /> Receive
-                        </Button>
-                      </td>
+            <>
+              <div className="md:hidden space-y-2.5">
+                {actionQueue.map(({ p, m }) => (
+                  <div
+                    key={p.id}
+                    className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/50 p-3 space-y-2"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onOpenProduct(p)}
+                        className="text-left min-w-0 hover:text-[var(--accent)] cursor-pointer"
+                      >
+                        <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">{p.name}</div>
+                        <div className="font-mono text-[11px] text-slate-600 dark:text-slate-300">{p.sku}</div>
+                      </button>
+                      <StatusLabel status={m.status} />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-[11px] font-mono tabular-nums pt-1.5 border-t border-slate-200/70 dark:border-slate-800">
+                      <div>
+                        <span className="block font-sans text-slate-600 dark:text-slate-300">On hand</span>
+                        <span className="font-semibold text-slate-900 dark:text-slate-100">{fmtInt(p.stock)} {p.unit}</span>
+                      </div>
+                      <div>
+                        <span className="block font-sans text-slate-600 dark:text-slate-300">ROP</span>
+                        <span className="text-slate-700 dark:text-slate-200">{fmtInt(m.rop)}</span>
+                      </div>
+                      <div>
+                        <span className="block font-sans text-slate-600 dark:text-slate-300">EOQ</span>
+                        <span className="text-slate-900 dark:text-slate-100 font-semibold">{fmtInt(m.suggestedOrderQty)}</span>
+                      </div>
+                    </div>
+                    <div className="flex justify-end pt-1">
+                      <Button size="sm" variant="secondary" onClick={() => onMoveStock(p, 'in')}>
+                        <PackageCheck className="h-3.5 w-3.5" /> Receive EOQ
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="hidden md:block overflow-x-auto -mx-4 px-4">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200 dark:border-slate-800 text-left text-[11px] text-slate-600 dark:text-slate-300">
+                      <th scope="col" className="pb-2 font-medium">SKU / Item</th>
+                      <th scope="col" className="pb-2 font-medium">Status</th>
+                      <th scope="col" className="pb-2 font-medium text-right">On hand</th>
+                      <th scope="col" className="pb-2 font-medium text-right">
+                        <span className="inline-flex items-center justify-end gap-1">ROP <TermTooltip termKey="rop" /></span>
+                      </th>
+                      <th scope="col" className="pb-2 font-medium text-right">
+                        <span className="inline-flex items-center justify-end gap-1">EOQ <TermTooltip termKey="eoq" /></span>
+                      </th>
+                      <th scope="col" className="pb-2 font-medium text-right">Action</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                    {actionQueue.map(({ p, m }) => (
+                      <tr key={p.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                        <td className="py-2.5 pr-3">
+                          <button
+                            type="button"
+                            onClick={() => onOpenProduct(p)}
+                            className="text-left hover:text-[var(--accent)] cursor-pointer"
+                          >
+                            <div className="font-medium text-slate-900 dark:text-slate-100">{p.name}</div>
+                            <div className="font-mono text-[11px] text-slate-600 dark:text-slate-300">{p.sku}</div>
+                          </button>
+                        </td>
+                        <td className="py-2.5 pr-3">
+                          <StatusLabel status={m.status} />
+                        </td>
+                        <td className="py-2.5 pr-3 text-right font-mono tabular-nums">
+                          {fmtInt(p.stock)} {p.unit}
+                        </td>
+                        <td className="py-2.5 pr-3 text-right font-mono tabular-nums text-slate-600 dark:text-slate-300">
+                          {fmtInt(m.rop)}
+                        </td>
+                        <td className="py-2.5 pr-3 text-right font-mono tabular-nums text-slate-700 dark:text-slate-200">
+                          {fmtInt(m.suggestedOrderQty)}
+                        </td>
+                        <td className="py-2.5 text-right">
+                          <Button size="sm" variant="secondary" onClick={() => onMoveStock(p, 'in')}>
+                            <PackageCheck className="h-3.5 w-3.5" /> Receive
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           ) : (
             <div className="py-6 text-center text-xs text-slate-600 dark:text-slate-300">
               All {fmtInt(summary.skuCount)} SKUs sit above their safety stock and reorder thresholds.
@@ -330,14 +414,37 @@ export const DashboardPage: React.FC<{
             </Button>
           }
         >
-          <div className="overflow-x-auto -mx-4 px-4">
+          <div className="md:hidden space-y-2">
+            {topUsage.map(({ p, m }) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => onOpenProduct(p)}
+                className="w-full text-left rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/50 p-2.5 flex items-center justify-between gap-2 cursor-pointer"
+              >
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">{p.name}</div>
+                  <div className="font-mono text-[11px] text-slate-600 dark:text-slate-300">{p.sku} · {fmtCover(m.monthsOfCover)} · {fmtNum(p.serviceLevel, 0)}% SL</div>
+                </div>
+                <div className="font-mono tabular-nums text-xs font-semibold text-slate-900 dark:text-slate-100 shrink-0">
+                  {fmtMoney(m.usageValue)}
+                </div>
+              </button>
+            ))}
+          </div>
+
+          <div className="hidden md:block overflow-x-auto -mx-4 px-4">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-200 dark:border-slate-800 text-left text-[11px] text-slate-600 dark:text-slate-300">
                   <th scope="col" className="pb-2 font-medium">SKU</th>
                   <th scope="col" className="pb-2 font-medium text-right">Annual usage</th>
-                  <th scope="col" className="pb-2 font-medium text-right">Cover</th>
-                  <th scope="col" className="pb-2 font-medium text-right">SL</th>
+                  <th scope="col" className="pb-2 font-medium text-right">
+                    <span className="inline-flex items-center justify-end gap-1">Cover <TermTooltip termKey="cover" /></span>
+                  </th>
+                  <th scope="col" className="pb-2 font-medium text-right">
+                    <span className="inline-flex items-center justify-end gap-1">SL <TermTooltip termKey="serviceLevel" /></span>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
@@ -371,9 +478,9 @@ export const DashboardPage: React.FC<{
           </div>
 
           {transactions.length > 0 && (
-            <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-600 dark:text-slate-300">
-              <span>Latest ledger move: {transactions[0].note}</span>
-              <span className="font-mono">{relTime(transactions[0].ts)}</span>
+            <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 text-[11px] text-slate-600 dark:text-slate-300">
+              <span className="truncate">Latest ledger move: {transactions[0].note}</span>
+              <span className="font-mono shrink-0">{relTime(transactions[0].ts)}</span>
             </div>
           )}
         </Panel>
@@ -390,7 +497,7 @@ export const DashboardPage: React.FC<{
                 key={sku}
                 type="button"
                 onClick={() => setPreviewSku(sku)}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-mono transition-colors cursor-pointer ${
+                className={`px-2.5 py-1.5 min-h-[34px] sm:min-h-0 rounded-md text-[11px] font-mono transition-colors cursor-pointer ${
                   previewSku === sku
                     ? 'bg-[var(--accent)] text-white'
                     : 'border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800'
@@ -414,8 +521,8 @@ export const DashboardPage: React.FC<{
             <LazyFactory3DViewport
               mode="assembly"
               assemblySku={previewSku}
-              plantProducts={[]}
-              plantStations={[]}
+              plantProducts={EMPTY_PLANT_PRODUCTS}
+              plantStations={EMPTY_PLANT_STATIONS}
               explodeAmount={previewExplode}
               onExplodeChange={setPreviewExplode}
               finish="steel"

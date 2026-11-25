@@ -35,6 +35,7 @@ const InventoryPage = lazy(() => import('./pages/InventoryPage').then((m) => ({ 
 const LedgerPage = lazy(() => import('./pages/LedgerPage').then((m) => ({ default: m.LedgerPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })));
 import { AssemblySku, isAssemblySku } from './engine/threeSpecs';
+import { inferOnboardingStepForRoute } from './engine/uxHelpers';
 import { Product } from './store/store';
 import { StoreProvider, useStore } from './store/StoreContext';
 
@@ -69,7 +70,7 @@ function hasAutostartParam(): boolean {
 }
 
 function WorkbenchRoot() {
-  const { settings, toasts, dismissToast } = useStore();
+  const { settings, toasts, dismissToast, completeOnboardingStep } = useStore();
   const [booting, setBooting] = useState(() => !hasAutostartParam());
   const [route, setRoute] = useState<RouteId>(() => parseHashRoute());
   const [formModal, setFormModal] = useState<{ open: boolean; product: Product | null }>({ open: false, product: null });
@@ -98,6 +99,13 @@ function WorkbenchRoot() {
     }
   }, []);
 
+  useEffect(() => {
+    const stepId = inferOnboardingStepForRoute(route);
+    if (stepId && !(settings.onboardingCompletedSteps || []).includes(stepId)) {
+      completeOnboardingStep(stepId);
+    }
+  }, [route, settings.onboardingCompletedSteps, completeOnboardingStep]);
+
   const open3D = useCallback(
     (sku?: string) => {
       if (sku && isAssemblySku(sku)) {
@@ -109,7 +117,11 @@ function WorkbenchRoot() {
   );
 
   useEffect(() => {
-    const onHash = () => setRoute(parseHashRoute());
+    const onHash = () => {
+      const hash = window.location.hash;
+      if (hash === '#main-content' || hash === '#home-main') return;
+      setRoute(parseHashRoute());
+    };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
@@ -168,17 +180,19 @@ function WorkbenchRoot() {
 
       {route === 'home' ? (
         <>
-          <Suspense fallback={<ModuleSkeleton label="Loading workbench…" />}>
-            <HomePage
-              onNavigate={navigate}
-              onAddProduct={openAdd}
-              onOpenProduct={(p) => setDetailProduct(p)}
-              onOpenCommandPalette={() => setCmdOpen(true)}
-              onOpenHelp={(topicId) => setHelpState({ open: true, topicId: topicId ?? null })}
-              onOpenOnboarding={() => setOnboardingOpen(true)}
-              onOpenHistory={() => setHistoryOpen(true)}
-            />
-          </Suspense>
+          <ErrorBoundary routeKey="home" onResetRoute={() => window.location.reload()}>
+            <Suspense fallback={<ModuleSkeleton label="Loading workbench…" />}>
+              <HomePage
+                onNavigate={navigate}
+                onAddProduct={openAdd}
+                onOpenProduct={(p) => setDetailProduct(p)}
+                onOpenCommandPalette={() => setCmdOpen(true)}
+                onOpenHelp={(topicId) => setHelpState({ open: true, topicId: topicId ?? null })}
+                onOpenOnboarding={() => setOnboardingOpen(true)}
+                onOpenHistory={() => setHistoryOpen(true)}
+              />
+            </Suspense>
+          </ErrorBoundary>
           <ToastContainer toasts={toasts} onDismiss={dismissToast} />
         </>
       ) : (

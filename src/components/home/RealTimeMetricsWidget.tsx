@@ -155,7 +155,7 @@ export const RealTimeMetricsWidget: React.FC<RealTimeMetricsWidgetProps> = ({
             <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
               Recent Production &amp; Inventory Alerts
             </span>
-            <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+            <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">
               {data.recentAlerts.length > 0
                 ? `Top ${data.recentAlerts.length} prioritized SKUs`
                 : 'No active exceptions'}

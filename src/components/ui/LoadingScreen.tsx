@@ -71,24 +71,18 @@ export const LoadingScreen: React.FC<{
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(16,185,129,0.16),_transparent_62%)]"
       />
 
-      <div className="relative w-full max-w-md rounded-2xl border border-slate-800/90 bg-slate-900/90 p-7 sm:p-8 shadow-2xl">
-        {/* Brand Header */}
-        <div className="flex items-center gap-3.5">
-          <div className="h-12 w-12 rounded-xl border border-slate-700/80 bg-slate-950 flex items-center justify-center p-2 shadow-sm shrink-0">
-            <img
-              src={publicAsset('assets/aistudio/logo_0620d144.svg')}
-              alt="FactoryMind emblem"
-              className="h-full w-full"
-            />
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-2xl font-bold tracking-tight text-white leading-tight">
-              FactoryMind
-            </h1>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Smart Inventory &amp; Production Engineering Workbench
-            </p>
-          </div>
+      <div className="relative w-full max-w-md rounded-2xl border border-slate-800/90 bg-[#030a17] p-6 sm:p-7 shadow-2xl">
+        {/* Full Brand Lockup */}
+        <div className="flex flex-col items-center text-center">
+          <h1 className="sr-only">FactoryMind — Smarter Factory. Brighter Future.</h1>
+          <img
+            src={publicAsset('assets/aistudio/FactoryMind_Logo_ce7bb11d.png')}
+            alt="FactoryMind — Smarter Factory. Brighter Future."
+            className="w-56 sm:w-60 -my-2 h-auto object-contain select-none [mask-image:radial-gradient(ellipse_at_center,black_68%,transparent_98%)]"
+          />
+          <p className="text-[11px] text-slate-400 mt-1">
+            Smart Inventory &amp; Production Engineering Workbench
+          </p>
         </div>
 
         {/* Precision Progress Bar */}

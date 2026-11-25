@@ -235,3 +235,40 @@ test('publicAsset resolves root and GitHub Pages subpath asset URLs cleanly', as
     '/my-repo/assets/aistudio/logo_0620d144.svg'
   );
 });
+
+test('engineering glossary, related-module workflow graph, and validation helpers work deterministically', async () => {
+  const {
+    ENGINEERING_GLOSSARY,
+    getEngineeringTerm,
+    getRelatedModules,
+    inferOnboardingStepForRoute,
+    validateNumberRange,
+  } = await import('./uxHelpers');
+
+  assert.ok(Object.keys(ENGINEERING_GLOSSARY).length >= 20);
+  const cpk = getEngineeringTerm('cpk');
+  assert.ok(cpk.term.includes('Cpk'));
+  assert.ok(cpk.formula && cpk.formula.includes('USL'));
+  assert.ok(cpk.definition.length > 20);
+
+  const invRelated = getRelatedModules('inventory');
+  assert.equal(invRelated.length, 3);
+  assert.ok(invRelated.some((r) => r.route === 'eoq'));
+  assert.deepEqual(getRelatedModules('nonexistent-route'), []);
+
+  assert.equal(inferOnboardingStepForRoute('factory-sim'), 'run-des-sim');
+  assert.equal(inferOnboardingStepForRoute('dashboard'), null);
+
+  const okInt = validateNumberRange('42', { label: 'Lead time', min: 0, max: 365, integer: true });
+  assert.equal(okInt.valid, true);
+  assert.equal(okInt.value, 42);
+
+  const badStrict = validateNumberRange('0', { label: 'Production rate', min: 0, strictMin: true });
+  assert.equal(badStrict.valid, false);
+  assert.ok(badStrict.error?.includes('greater than 0'));
+
+  const badNaN = validateNumberRange('', { label: 'Holding rate', min: 0.1 });
+  assert.equal(badNaN.valid, false);
+  assert.ok(badNaN.error?.includes('valid number'));
+});
+

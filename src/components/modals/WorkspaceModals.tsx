@@ -116,25 +116,33 @@ export const ProductFormModal: React.FC<{
       name: name.trim(),
       category: category.trim() || 'Other',
       unit: unit.trim() || 'pcs',
-      unitCost: Number(unitCost) || 0,
-      stock: Number(stock) || 0,
-      annualDemand: Number(annualDemand) || 0,
-      orderCost: Number(orderCost) || 0,
-      holdingRate: Number(holdingRate) || 20,
-      leadTime: Number(leadTime) || 7,
-      serviceLevel: Number(serviceLevel) || 95,
+      unitCost: Number.isFinite(Number(unitCost)) ? Number(unitCost) : 0,
+      stock: Number.isFinite(Number(stock)) ? Number(stock) : 0,
+      annualDemand: Number.isFinite(Number(annualDemand)) ? Number(annualDemand) : 0,
+      orderCost: Number.isFinite(Number(orderCost)) ? Number(orderCost) : 0,
+      holdingRate: Number.isFinite(Number(holdingRate)) ? Number(holdingRate) : 20,
+      leadTime: Number.isFinite(Number(leadTime)) ? Number(leadTime) : 7,
+      serviceLevel: Number.isFinite(Number(serviceLevel)) ? Number(serviceLevel) : 95,
       demandHistory: parsedHistory,
       demandSource,
     };
 
-    if (product) {
-      updateProduct(product.id, payload);
-      pushToast({ type: 'success', message: `Updated ${payload.sku || product.sku}.` });
-    } else {
-      const created = addProduct(payload);
-      pushToast({ type: 'success', message: `Added ${created.sku} · ${created.name}.` });
+    try {
+      if (product) {
+        updateProduct(product.id, payload);
+        pushToast({ type: 'success', message: `Updated ${payload.sku || product.sku}.` });
+      } else {
+        const created = addProduct(payload);
+        pushToast({ type: 'success', message: `Added ${created.sku} · ${created.name}.` });
+      }
+      onClose();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to save SKU changes.';
+      if (/sku/i.test(msg)) {
+        setFieldErrors((prev) => ({ ...prev, sku: msg }));
+      }
+      pushToast({ type: 'error', message: msg });
     }
-    onClose();
   };
 
   const catList = categories();
@@ -177,22 +185,22 @@ export const ProductFormModal: React.FC<{
           <Field label="Annual demand" error={fieldErrors.annualDemand}>
             <Input type="number" step="any" min="0" value={annualDemand} onChange={(e) => setAnnualDemand(e.target.value)} />
           </Field>
-          <Field label="Order / setup cost ($)" error={fieldErrors.orderCost}>
+          <Field label="Order / setup cost ($)" termKey="orderCost" error={fieldErrors.orderCost}>
             <Input type="number" step="0.01" min="0" value={orderCost} onChange={(e) => setOrderCost(e.target.value)} />
           </Field>
-          <Field label="Holding rate (%/yr)" error={fieldErrors.holdingRate}>
+          <Field label="Holding rate (%/yr)" termKey="holdingRate" error={fieldErrors.holdingRate}>
             <Input type="number" step="0.1" min="0.1" max="100" value={holdingRate} onChange={(e) => setHoldingRate(e.target.value)} />
           </Field>
           <Field label="Lead time (days)" error={fieldErrors.leadTime}>
             <Input type="number" step="1" min="0" value={leadTime} onChange={(e) => setLeadTime(e.target.value)} />
           </Field>
-          <Field label="Target service level (%)" hint="50 – 99.9" error={fieldErrors.serviceLevel}>
+          <Field label="Target service level (%)" hint="50 – 99.9" termKey="serviceLevel" error={fieldErrors.serviceLevel}>
             <Input type="number" step="0.5" min="50" max="99.9" value={serviceLevel} onChange={(e) => setServiceLevel(e.target.value)} />
           </Field>
         </div>
 
         <div className="space-y-1">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <label htmlFor="sku-demand-history" className="text-xs font-medium text-slate-700 dark:text-slate-200">
               Monthly demand history (optional)
             </label>
@@ -232,7 +240,7 @@ export const ProductFormModal: React.FC<{
           )}
         </div>
 
-        <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+        <div className="flex flex-wrap justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
@@ -488,9 +496,9 @@ export const BomEditorModal: React.FC<{
     >
       <div className="space-y-3">
         {lines.map((l, idx) => (
-          <div key={idx} className="space-y-1">
-            <div className="grid grid-cols-12 gap-2 items-center">
-              <div className="col-span-7">
+          <div key={idx} className="space-y-1 pb-2.5 sm:pb-0 border-b sm:border-b-0 border-slate-100 dark:border-slate-800 last:border-b-0">
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+              <div className="sm:col-span-7">
                 <Select
                   aria-label={`BOM component ${idx + 1}`}
                   aria-invalid={lineErrors[idx] ? true : undefined}
@@ -507,7 +515,7 @@ export const BomEditorModal: React.FC<{
                   ))}
                 </Select>
               </div>
-              <div className="col-span-3">
+              <div className="sm:col-span-3">
                 <Input
                   type="number"
                   step="0.1"
@@ -521,10 +529,11 @@ export const BomEditorModal: React.FC<{
                   }}
                 />
               </div>
-              <div className="col-span-2 text-right">
+              <div className="sm:col-span-2 sm:text-right">
                 <Button
                   size="sm"
                   variant="ghost"
+                  className="w-full sm:w-auto"
                   onClick={() => setLines((prev) => prev.filter((_, i) => i !== idx))}
                 >
                   Remove
@@ -543,7 +552,7 @@ export const BomEditorModal: React.FC<{
           + Add component line
         </Button>
 
-        <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+        <div className="flex flex-wrap justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>

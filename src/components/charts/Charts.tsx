@@ -47,9 +47,9 @@ export const LineChart: React.FC<LineChartProps> = ({
 }) => {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [showTable, setShowTable] = useState(false);
-  const W = 720;
+  const W = 560;
   const H = height;
-  const pad = { top: 18, right: 20, bottom: 30, left: 56 };
+  const pad = { top: 18, right: 16, bottom: 30, left: 54 };
   const pw = W - pad.left - pad.right;
   const ph = H - pad.top - pad.bottom;
   const n = Math.max(labels.length, ...series.map((s) => s.data.length), 1);
@@ -130,6 +130,10 @@ export const LineChart: React.FC<LineChartProps> = ({
     caption ||
     `Line chart showing ${series.map((s) => s.name).join(', ')} across ${n} periods (range ${formatValue(rawMin)} to ${formatValue(rawMax)}).`;
 
+  if (!labels.length && series.every((s) => !s.data.length)) {
+    return <div className="py-8 text-center text-xs text-slate-600 dark:text-slate-300">No data to display</div>;
+  }
+
   return (
     <figure className="relative w-full select-none">
       <figcaption className="sr-only">{summaryText}</figcaption>
@@ -192,12 +196,19 @@ export const LineChart: React.FC<LineChartProps> = ({
         >
           <svg
             viewBox={`0 0 ${W} ${H}`}
-            className="w-full h-auto overflow-visible"
+            className="w-full h-auto overflow-visible touch-pan-y"
             aria-hidden="true"
             onMouseLeave={() => setHoverIdx(null)}
+            onPointerDown={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              const relX = ((e.clientX - rect.left) / Math.max(1, rect.width)) * W;
+              const clamped = Math.max(pad.left, Math.min(W - pad.right, relX));
+              const idx = n > 1 ? Math.round(((clamped - pad.left) / pw) * (n - 1)) : 0;
+              setHoverIdx(Math.max(0, Math.min(n - 1, idx)));
+            }}
             onMouseMove={(e) => {
               const rect = e.currentTarget.getBoundingClientRect();
-              const relX = ((e.clientX - rect.left) / rect.width) * W;
+              const relX = ((e.clientX - rect.left) / Math.max(1, rect.width)) * W;
               const clamped = Math.max(pad.left, Math.min(W - pad.right, relX));
               const idx = n > 1 ? Math.round(((clamped - pad.left) / pw) * (n - 1)) : 0;
               setHoverIdx(Math.max(0, Math.min(n - 1, idx)));
@@ -218,9 +229,9 @@ export const LineChart: React.FC<LineChartProps> = ({
                   />
                   <text
                     x={pad.left - 8}
-                    y={y + 3.5}
+                    y={y + 4}
                     textAnchor="end"
-                    className="fill-slate-600 dark:fill-slate-300 text-[10px] font-mono tabular-nums"
+                    className="fill-slate-600 dark:fill-slate-300 text-[11px] font-mono tabular-nums"
                   >
                     {formatValue(t)}
                   </text>
@@ -323,9 +334,9 @@ export const LineChart: React.FC<LineChartProps> = ({
                 <text
                   key={i}
                   x={xAt(i)}
-                  y={H - 8}
+                  y={H - 7}
                   textAnchor="middle"
-                  className="fill-slate-600 dark:fill-slate-300 text-[10px] font-mono"
+                  className="fill-slate-600 dark:fill-slate-300 text-[11px] font-mono"
                 >
                   {lbl}
                 </text>
@@ -409,7 +420,7 @@ export const LineChart: React.FC<LineChartProps> = ({
             type="button"
             aria-pressed={showTable}
             onClick={() => setShowTable((v) => !v)}
-            className="text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-[var(--accent)] px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 cursor-pointer"
+            className="text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-[var(--accent)] px-2.5 py-1 min-h-[28px] rounded border border-slate-200 dark:border-slate-700 cursor-pointer"
           >
             {showTable ? 'Chart view' : 'Data table'}
           </button>
@@ -448,46 +459,84 @@ export const BarChart: React.FC<BarChartProps> = ({
     `Bar chart comparing ${series.map((s) => s.name).join(', ')} across ${labels.length} categories.`;
 
   if (horizontal) {
-    const maxVal = Math.max(1e-9, ...series.flatMap((s) => s.data));
+    const safeValues = series[0]?.data.map((v) => (Number.isFinite(v) ? Math.max(0, v) : 0)) || [];
+    const maxVal = Math.max(1e-9, ...safeValues);
     return (
       <figure className="space-y-2.5">
         <figcaption className="sr-only">{summaryText}</figcaption>
-        {labels.map((lbl, i) => {
-          const val = series[0]?.data[i] ?? 0;
-          const pct = Math.max(2, (val / maxVal) * 100);
-          return (
-            <div key={lbl} className="space-y-1">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-700 dark:text-slate-200 truncate pr-2">{lbl}</span>
-                <span className="font-mono tabular-nums text-slate-700 dark:text-slate-200 shrink-0">
-                  {formatValue(val)}
-                </span>
-              </div>
-              <div className="h-2 w-full rounded bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                <div
-                  className="h-full rounded transition-all"
-                  style={{
-                    width: `${pct}%`,
-                    backgroundColor: series[0]?.color || 'var(--accent)',
-                  }}
-                />
-              </div>
-            </div>
-          );
-        })}
+        {showTable ? (
+          <div className="max-h-60 overflow-auto rounded-md border border-slate-200 dark:border-slate-800">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
+                <tr className="text-left text-[11px] text-slate-600 dark:text-slate-300">
+                  <th scope="col" className="px-3 py-1.5 font-medium">Category</th>
+                  <th scope="col" className="px-3 py-1.5 font-medium text-right">{series[0]?.name || 'Value'}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                {labels.map((lbl, i) => (
+                  <tr key={`${lbl}-${i}`}>
+                    <th scope="row" className="px-3 py-1.5 text-left font-medium text-slate-700 dark:text-slate-200">
+                      {lbl}
+                    </th>
+                    <td className="px-3 py-1.5 text-right font-mono tabular-nums text-slate-800 dark:text-slate-100">
+                      {formatValue(safeValues[i] ?? 0)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {labels.map((lbl, i) => {
+              const val = safeValues[i] ?? 0;
+              const pct = val > 0 ? Math.max(2, Math.min(100, (val / maxVal) * 100)) : 0;
+              return (
+                <div key={`${lbl}-${i}`} className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-700 dark:text-slate-200 truncate pr-2">{lbl}</span>
+                    <span className="font-mono tabular-nums text-slate-700 dark:text-slate-200 shrink-0">
+                      {formatValue(val)}
+                    </span>
+                  </div>
+                  <div className="h-2 w-full rounded bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                    <div
+                      className="h-full rounded transition-all"
+                      style={{
+                        width: `${pct}%`,
+                        backgroundColor: series[0]?.color || 'var(--accent)',
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="flex justify-end">
+          <button
+            type="button"
+            aria-pressed={showTable}
+            onClick={() => setShowTable((v) => !v)}
+            className="text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-[var(--accent)] px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 cursor-pointer"
+          >
+            {showTable ? 'Chart view' : 'Data table'}
+          </button>
+        </div>
       </figure>
     );
   }
 
-  const W = 720;
+  const W = 560;
   const H = height;
-  const pad = { top: 16, right: 16, bottom: 28, left: 52 };
+  const pad = { top: 16, right: 14, bottom: 28, left: 52 };
   const pw = W - pad.left - pad.right;
   const ph = H - pad.top - pad.bottom;
   const maxVal = Math.max(1, ...series.flatMap((s) => s.data)) * 1.1;
   const groupW = pw / labels.length;
-  const barW = Math.min(26, Math.max(4, (groupW * 0.72) / Math.max(1, series.length)));
-  const labelStep = Math.max(1, Math.ceil(labels.length / 8));
+  const barW = Math.min(24, Math.max(4, (groupW * 0.72) / Math.max(1, series.length)));
+  const labelStep = Math.max(1, Math.ceil(labels.length / 7));
   const visibleBarTicks = new Set<number>();
   if (labels.length === 1) {
     visibleBarTicks.add(0);
@@ -576,9 +625,9 @@ export const BarChart: React.FC<BarChartProps> = ({
                   />
                   <text
                     x={pad.left - 8}
-                    y={y + 3.5}
+                    y={y + 4}
                     textAnchor="end"
-                    className="fill-slate-600 dark:fill-slate-300 text-[10px] font-mono tabular-nums"
+                    className="fill-slate-600 dark:fill-slate-300 text-[11px] font-mono tabular-nums"
                   >
                     {formatValue(v)}
                   </text>
@@ -590,7 +639,7 @@ export const BarChart: React.FC<BarChartProps> = ({
               const gx = pad.left + i * groupW + groupW / 2;
               const totalBarsW = series.length * barW + (series.length - 1) * 2;
               return (
-                <g key={i} onMouseEnter={() => setHoverIdx(i)}>
+                <g key={i} onMouseEnter={() => setHoverIdx(i)} onClick={() => setHoverIdx(i)}>
                   {hoverIdx === i && (
                     <rect
                       x={pad.left + i * groupW}
@@ -620,9 +669,9 @@ export const BarChart: React.FC<BarChartProps> = ({
                   {visibleBarTicks.has(i) && (
                     <text
                       x={gx}
-                      y={H - 8}
+                      y={H - 7}
                       textAnchor="middle"
-                      className="fill-slate-600 dark:fill-slate-300 text-[10px] font-mono"
+                      className="fill-slate-600 dark:fill-slate-300 text-[11px] font-mono"
                     >
                       {lbl}
                     </text>
@@ -665,7 +714,7 @@ export const BarChart: React.FC<BarChartProps> = ({
             type="button"
             aria-pressed={showTable}
             onClick={() => setShowTable((v) => !v)}
-            className="text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-[var(--accent)] px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 cursor-pointer"
+            className="text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-[var(--accent)] px-2.5 py-1 min-h-[28px] rounded border border-slate-200 dark:border-slate-700 cursor-pointer"
           >
             {showTable ? 'Chart view' : 'Data table'}
           </button>
@@ -696,15 +745,20 @@ export const ParetoChart: React.FC<ParetoChartProps> = ({
 }) => {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [showTable, setShowTable] = useState(false);
-  const W = 720;
-  const H = 260;
-  const pad = { top: 18, right: 44, bottom: 36, left: 56 };
+
+  if (!labels.length || !values.length) {
+    return <div className="py-8 text-center text-xs text-slate-600 dark:text-slate-300">No SKU usage data to display</div>;
+  }
+
+  const W = 560;
+  const H = 250;
+  const pad = { top: 18, right: 44, bottom: 34, left: 54 };
   const pw = W - pad.left - pad.right;
   const ph = H - pad.top - pad.bottom;
   const n = Math.max(1, values.length);
   const maxVal = Math.max(1, ...values) * 1.08;
   const groupW = pw / n;
-  const barW = Math.max(6, Math.min(28, groupW * 0.72));
+  const barW = Math.max(6, Math.min(26, groupW * 0.72));
 
   const classColor = (c: 'A' | 'B' | 'C') => (c === 'A' ? '#2563eb' : c === 'B' ? '#10b981' : '#94a3b8');
   const yPct = (pct: number) => pad.top + ph - (pct / 100) * ph;

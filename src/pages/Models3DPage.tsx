@@ -369,7 +369,7 @@ export const Models3DPage: React.FC<{
                   />
                   <div>
                     <div className="text-xs font-semibold leading-tight">{s.title}</div>
-                    <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
+                    <div className="text-[11px] font-mono text-slate-600 dark:text-slate-300 mt-0.5">
                       {sku} {prod ? `· ${fmtInt(prod.stock)} on hand` : ''}
                     </div>
                   </div>
@@ -381,7 +381,7 @@ export const Models3DPage: React.FC<{
           <div className="space-y-3">
             {/* Before vs After Scenario Bar & Playback Controls */}
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 px-3 py-2.5">
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 min-w-0">
                 <Button
                   size="sm"
                   variant={simPlaying ? 'primary' : 'secondary'}
@@ -393,7 +393,7 @@ export const Models3DPage: React.FC<{
                 </Button>
 
                 {activeTotalFrames > 1 && (
-                  <div className="flex items-center gap-1.5 ml-1">
+                  <div className="flex flex-wrap items-center gap-1.5 sm:ml-1 min-w-0">
                     <Button
                       size="sm"
                       variant={clockPlaying ? 'primary' : 'ghost'}
@@ -449,8 +449,8 @@ export const Models3DPage: React.FC<{
               </div>
 
               {/* Before vs After Scenario Switcher */}
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+              <div className="flex flex-wrap items-center gap-2 min-w-0">
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 dark:text-slate-300">
                   <GitCompare className="h-3.5 w-3.5 text-[var(--accent)]" />
                   Compare State:
                 </span>
@@ -559,7 +559,7 @@ export const Models3DPage: React.FC<{
 
       {/* Main 3D / 2D Twin Viewport + Data-Connected Telemetry Inspector */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-        <div className="lg:col-span-8 space-y-3">
+        <div className="lg:col-span-8 min-w-0 space-y-3">
           <LazyFactory3DViewport
             mode={mode}
             assemblySku={assemblySku}
@@ -592,7 +592,7 @@ export const Models3DPage: React.FC<{
               <span className="font-semibold text-slate-700 dark:text-slate-200">
                 9-State Visual Indicator Legend (Synced across 3D &amp; 2D Twin)
               </span>
-              <span className="font-mono text-slate-500 dark:text-slate-400">
+              <span className="font-mono text-slate-600 dark:text-slate-300">
                 {compareView === 'scenario'
                   ? 'PROVENANCE: SCENARIO COUNTERFACTUAL (NON-MUTATING)'
                   : 'PROVENANCE: WORKSPACE CATALOG + DES SIMULATED MODEL'}
@@ -613,14 +613,14 @@ export const Models3DPage: React.FC<{
                 </span>
               ))}
             </div>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+            <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
               {activeSnapshot.provenanceNote}
             </p>
           </div>
         </div>
 
         {/* Live Telemetry, Component Relationships & Scenario Inspector */}
-        <div className="lg:col-span-4 space-y-4">
+        <div className="lg:col-span-4 min-w-0 space-y-4">
           <Panel
             title={
               selectedStation
@@ -1029,7 +1029,7 @@ export const Models3DPage: React.FC<{
                               <div className="font-mono text-[11px] font-semibold truncate">
                                 {bin.location.code} · {bin.sku}
                               </div>
-                              <div className="text-[11px] text-slate-500 truncate">
+                              <div className="text-[11px] text-slate-600 dark:text-slate-300 truncate">
                                 {fmtInt(bin.stock)} {bin.unit} (ROP {fmtInt(bin.rop)})
                               </div>
                             </div>
@@ -1050,11 +1050,11 @@ export const Models3DPage: React.FC<{
 
           {/* Integrated Engineering Navigation Card */}
           <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 min-w-0">
               <Cpu className="h-4 w-4 text-[var(--accent)] shrink-0" />
               <span>Run full multi-module scenarios for {assemblySku}</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 size="sm"
                 variant="ghost"

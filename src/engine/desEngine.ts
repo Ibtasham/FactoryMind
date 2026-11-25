@@ -1081,6 +1081,7 @@ export function runDiscreteEventSimulation(cfg: DesConfig): DesResult {
   const repCycle: number[] = [];
   const repLead: number[] = [];
   const repWip: number[] = [];
+  const repFloorWip: number[] = [];
   let maxWipAcrossReps = 0;
 
   let aggGood = 0;
@@ -1276,6 +1277,7 @@ export function runDiscreteEventSimulation(cfg: DesConfig): DesResult {
     let leadSum = 0;
     let leadCount = 0;
     let wipArea = 0;
+    let floorWipArea = 0;
     let maxWip = 0;
 
     // Seed calendar transitions
@@ -1369,6 +1371,7 @@ export function runDiscreteEventSimulation(cfg: DesConfig): DesResult {
       if (dt <= 1e-12 || !observing) return;
 
       wipArea += wipTotal * dt;
+      floorWipArea += Math.max(0, wipTotal - stagingQueue.length) * dt;
       maxWip = Math.max(maxWip, wipTotal);
 
       for (let si = 0; si < nStations; si++) {
@@ -1805,6 +1808,7 @@ export function runDiscreteEventSimulation(cfg: DesConfig): DesResult {
         leadSum = 0;
         leadCount = 0;
         wipArea = 0;
+        floorWipArea = 0;
         maxWip = wipTotal;
         for (const st of stations) {
           st.busyMin = 0;
@@ -2137,6 +2141,7 @@ export function runDiscreteEventSimulation(cfg: DesConfig): DesResult {
     repCycle.push(cycleCount > 0 ? cycleSum / cycleCount : 0);
     repLead.push(leadCount > 0 ? leadSum / leadCount : 0);
     repWip.push(wipArea / Math.max(1e-6, observedCalMin));
+    repFloorWip.push(floorWipArea / Math.max(1e-6, observedCalMin));
     maxWipAcrossReps = Math.max(maxWipAcrossReps, maxWip);
 
     aggGood += goodCompleted;
@@ -2336,11 +2341,15 @@ export function runDiscreteEventSimulation(cfg: DesConfig): DesResult {
   const totalWaitOps = aggStation.reduce((s, a) => s + a.waitCount, 0);
   const avgQueueWaitMin = totalWaitOps > 0 ? totalWaitWeighted / totalWaitOps : 0;
 
-  // For Little's Law in observed floor residence: L = lambda_per_min * cycleTimeMin
+  // For Little's Law in observed floor residence: L_floor = lambda_cal * W_floor
+  // Exclude external stagingQueue wait from both sides of the shop-floor identity.
+  const avgFloorWip = repFloorWip.reduce((a, b) => a + b, 0) / reps;
   const lambdaPerCalMin = tpCalCI.mean / 60;
   const littlesExpected = lambdaPerCalMin * cycleCI.mean;
   const littlesGapPct =
-    wipCI.mean > 0.05 ? (Math.abs(wipCI.mean - littlesExpected) / Math.max(wipCI.mean, littlesExpected, 0.1)) * 100 : 0;
+    avgFloorWip > 0.05
+      ? (Math.abs(avgFloorWip - littlesExpected) / Math.max(avgFloorWip, littlesExpected, 0.1)) * 100
+      : 0;
 
   // Economics
   const obsSchedHr = observedSchedMin / 60;

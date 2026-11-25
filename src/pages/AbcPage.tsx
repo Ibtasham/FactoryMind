@@ -67,6 +67,7 @@ export const AbcPage: React.FC<{ onOpenProduct: (p: Product) => void }> = ({ onO
             </div>
             <input
               type="range"
+              aria-label="Class A cumulative usage cutoff percent"
               min={50}
               max={85}
               step={5}
@@ -89,6 +90,7 @@ export const AbcPage: React.FC<{ onOpenProduct: (p: Product) => void }> = ({ onO
             </div>
             <input
               type="range"
+              aria-label="Class B cumulative usage cutoff percent"
               min={Math.min(95, aThreshold + 5)}
               max={98}
               step={2}
@@ -103,6 +105,7 @@ export const AbcPage: React.FC<{ onOpenProduct: (p: Product) => void }> = ({ onO
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
         <StatCard
           label={`Class A · ${summary.A.count} SKUs (${fmtNum(summary.A.countPct, 0)}%)`}
+          termKey="abcPareto"
           value={fmtMoney(summary.A.usage)}
           sub={`${fmtNum(summary.A.usagePct, 1)}% of usage · ${ABC_ADVICE.A}`}
         />
@@ -148,38 +151,81 @@ export const AbcPage: React.FC<{ onOpenProduct: (p: Product) => void }> = ({ onO
 
       {/* Ranked Table */}
       <Panel title="Ranked SKU breakdown" subtitle="Sorted descending by annual consumption value (Unit cost × Annual demand)">
-        <div className="overflow-x-auto -mx-4 px-4">
+        <div className="md:hidden space-y-2">
+          {abcRows.map((r) => {
+            const clsColor =
+              r.cls === 'A'
+                ? 'text-blue-700 dark:text-blue-400 font-semibold'
+                : r.cls === 'B'
+                  ? 'text-emerald-700 dark:text-emerald-400 font-semibold'
+                  : 'text-slate-600 dark:text-slate-300';
+            return (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => onOpenProduct(r.ref)}
+                className="w-full text-left rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/50 p-3 space-y-1.5 cursor-pointer"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
+                      #{r.rank} · {r.name}
+                    </div>
+                    <div className="font-mono text-[11px] text-slate-600 dark:text-slate-300">{r.sku}</div>
+                  </div>
+                  <span className={`font-mono text-xs shrink-0 ${clsColor}`}>Class {r.cls}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-[11px] font-mono tabular-nums pt-1 border-t border-slate-200/70 dark:border-slate-800">
+                  <div>
+                    <span className="block font-sans text-slate-600 dark:text-slate-300">Annual usage</span>
+                    <span className="font-semibold text-slate-900 dark:text-slate-100">{fmtMoney(r.usage)}</span>
+                  </div>
+                  <div>
+                    <span className="block font-sans text-slate-600 dark:text-slate-300">Share</span>
+                    <span>{fmtNum(r.pct, 1)}%</span>
+                  </div>
+                  <div>
+                    <span className="block font-sans text-slate-600 dark:text-slate-300">Cumulative</span>
+                    <span>{fmtNum(r.cumPct, 1)}%</span>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto -mx-4 px-4">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-slate-200 dark:border-slate-800 text-left text-[11px] text-slate-500">
-                <th className="pb-2 font-medium">#</th>
-                <th className="pb-2 font-medium">SKU / Product</th>
-                <th className="pb-2 font-medium">Class</th>
-                <th className="pb-2 font-medium text-right">Annual demand</th>
-                <th className="pb-2 font-medium text-right">Unit cost</th>
-                <th className="pb-2 font-medium text-right">Annual usage</th>
-                <th className="pb-2 font-medium text-right">Share</th>
-                <th className="pb-2 font-medium text-right">Cumulative</th>
+              <tr className="border-b border-slate-200 dark:border-slate-800 text-left text-[11px] text-slate-600 dark:text-slate-300">
+                <th scope="col" className="pb-2 font-medium">#</th>
+                <th scope="col" className="pb-2 font-medium">SKU / Product</th>
+                <th scope="col" className="pb-2 font-medium">Class</th>
+                <th scope="col" className="pb-2 font-medium text-right">Annual demand</th>
+                <th scope="col" className="pb-2 font-medium text-right">Unit cost</th>
+                <th scope="col" className="pb-2 font-medium text-right">Annual usage</th>
+                <th scope="col" className="pb-2 font-medium text-right">Share</th>
+                <th scope="col" className="pb-2 font-medium text-right">Cumulative</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
               {abcRows.map((r) => {
                 const clsColor =
                   r.cls === 'A'
-                    ? 'text-blue-600 dark:text-blue-400 font-semibold'
+                    ? 'text-blue-700 dark:text-blue-400 font-semibold'
                     : r.cls === 'B'
-                      ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
-                      : 'text-slate-500';
+                      ? 'text-emerald-700 dark:text-emerald-400 font-semibold'
+                      : 'text-slate-600 dark:text-slate-300';
                 return (
                   <tr key={r.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                    <td className="py-2 pr-3 font-mono text-slate-400">{r.rank}</td>
+                    <td className="py-2 pr-3 font-mono text-slate-500 dark:text-slate-400">{r.rank}</td>
                     <td className="py-2 pr-3">
                       <button
                         type="button"
                         onClick={() => onOpenProduct(r.ref)}
                         className="text-left hover:text-[var(--accent)] cursor-pointer"
                       >
-                        <span className="font-mono text-slate-500 mr-2">{r.sku}</span>
+                        <span className="font-mono text-slate-600 dark:text-slate-300 mr-2">{r.sku}</span>
                         <span className="font-medium text-slate-900 dark:text-slate-100">{r.name}</span>
                       </button>
                     </td>
@@ -187,8 +233,8 @@ export const AbcPage: React.FC<{ onOpenProduct: (p: Product) => void }> = ({ onO
                     <td className="py-2 pr-3 text-right font-mono tabular-nums">{fmtInt(r.ref.annualDemand)}</td>
                     <td className="py-2 pr-3 text-right font-mono tabular-nums">{fmtMoney(r.ref.unitCost, 2)}</td>
                     <td className="py-2 pr-3 text-right font-mono tabular-nums font-medium">{fmtMoney(r.usage)}</td>
-                    <td className="py-2 pr-3 text-right font-mono tabular-nums text-slate-500">{fmtNum(r.pct, 1)}%</td>
-                    <td className="py-2 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                    <td className="py-2 pr-3 text-right font-mono tabular-nums text-slate-600 dark:text-slate-300">{fmtNum(r.pct, 1)}%</td>
+                    <td className="py-2 text-right font-mono tabular-nums text-slate-700 dark:text-slate-200">
                       {fmtNum(r.cumPct, 1)}%
                     </td>
                   </tr>

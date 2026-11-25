@@ -170,3 +170,39 @@ test('isStaticHostingEnvironment identifies GitHub Pages, VITE_STATIC_ONLY build
   assert.ok(STATIC_AI_UNAVAILABLE_NOTICE.includes('GitHub Pages'));
   assert.ok(STATIC_AI_UNAVAILABLE_NOTICE.includes('Deterministic'));
 });
+
+test('buildPlantFloorTwin omits hardcoded decorative stations when empty and binds active assemblySku', () => {
+  const emptyBuilt = buildPlantFloorTwin([], [], 'steel');
+  assert.equal(emptyBuilt.parts.length, 0);
+  assert.equal(emptyBuilt.conveyorItems.length, 0);
+  assert.equal(emptyBuilt.plantHandle?.stationHandles.length, 0);
+  assert.equal(emptyBuilt.plantHandle?.topologyKey, '0::');
+  assert.equal(updatePlantFloorTwin(emptyBuilt, [], []), true);
+  emptyBuilt.dispose();
+
+  const stations: PlantStationInput[] = [
+    {
+      stationNumber: 1,
+      stationId: 'S1',
+      stationName: 'Pump Core Cell',
+      utilizationPct: 82,
+      taskCount: 3,
+      tasksLabel: 'Shaft & impeller press',
+      machineState: 'processing',
+      bufferCapacity: 6,
+      avgQueueLen: 1.5,
+      throughputPerHour: 32,
+    },
+  ];
+  const pumpBuilt = buildPlantFloorTwin([], stations, 'slate', { assemblySku: 'ASM-PA100' });
+  assert.equal(pumpBuilt.parts.length, 1);
+  assert.equal(pumpBuilt.parts[0].userData.sku, 'ASM-PA100');
+  assert.ok(pumpBuilt.conveyorItems.length > 0 && pumpBuilt.conveyorItems[0].speed > 0);
+
+  const updated = updatePlantFloorTwin(pumpBuilt, [], [{ ...stations[0], utilizationPct: 40 }], {
+    assemblySku: 'ASM-GS350',
+  });
+  assert.equal(updated, true);
+  assert.equal(pumpBuilt.parts[0].userData.sku, 'ASM-GS350');
+  pumpBuilt.dispose();
+});

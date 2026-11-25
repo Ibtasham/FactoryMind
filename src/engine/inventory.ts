@@ -94,12 +94,12 @@ function gammaFrom(rnd: () => number, shape: number, scale: number): number {
       const b = (Math.E + a) / Math.E;
       const p = b * u;
       if (p > 1) {
-        const x = -Math.log((b - p) / a);
-        const y = -Math.log(rnd());
+        const x = -Math.log(Math.max((b - p) / a, 1e-12));
+        const y = -Math.log(Math.max(rnd(), 1e-12));
         if (x > y) return sc * x;
       } else {
         const x = Math.pow(p, 1 / a);
-        const y = -Math.log(rnd());
+        const y = -Math.log(Math.max(rnd(), 1e-12));
         if (x > y) return sc * x;
       }
     }
@@ -115,7 +115,7 @@ function gammaFrom(rnd: () => number, shape: number, scale: number): number {
       v = 1 + c * x;
     } while (v <= 0);
     v = v * v * v;
-    const u = rnd();
+    const u = Math.max(rnd(), 1e-12);
     if (u < 1 - 0.0331 * x * x * x * x) return sc * d * v;
     if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return sc * d * v;
   }
@@ -810,14 +810,14 @@ export function queueMeckley({
 
   if (K === Infinity) {
     if (l >= c * m) return unstable(`M/M/c unstable — λ (${l}) must be < c·μ (${c * m})`);
-    let sum = 0;
-    let fk = 1;
-    for (let k = 0; k < c; k++) {
-      if (k > 0) fk *= k;
-      sum += Math.pow(a, k) / fk;
+    let sum = 1;
+    let termK = 1;
+    for (let k = 1; k < c; k++) {
+      termK = (termK * a) / k;
+      sum += termK;
     }
-    fk *= c;
-    const term = Math.pow(a, c) / (fk * (1 - rho));
+    const termC = (termK * a) / c;
+    const term = termC / (1 - rho);
     const p0 = 1 / (sum + term);
     if (!Number.isFinite(p0) || !(p0 > 0)) return unstable('numerical overflow computing P₀');
     const pWait = term * p0;
@@ -848,13 +848,22 @@ export function queueMeckley({
     };
   }
 
-  const p = new Array<number>(K + 1);
-  p[0] = 1;
+  // Log-space birth-death normalization prevents IEEE-754 overflow for large K and rho > 1
+  const logP = new Array<number>(K + 1);
+  logP[0] = 0;
+  let maxLogP = 0;
   for (let n = 1; n <= K; n++) {
     const serviceRate = n < c ? n * m : c * m;
-    p[n] = (p[n - 1] * l) / serviceRate;
+    logP[n] = logP[n - 1] + Math.log(l / serviceRate);
+    if (logP[n] > maxLogP) maxLogP = logP[n];
   }
-  const Z = p.reduce((s, v) => s + v, 0);
+  const p = new Array<number>(K + 1);
+  let Z = 0;
+  for (let n = 0; n <= K; n++) {
+    const scaled = Math.exp(logP[n] - maxLogP);
+    p[n] = scaled;
+    Z += scaled;
+  }
   if (!Number.isFinite(Z) || Z <= 0) return unstable('numerical overflow for M/M/c/K');
   for (let n = 0; n <= K; n++) p[n] /= Z;
   const p0ff = p[0];

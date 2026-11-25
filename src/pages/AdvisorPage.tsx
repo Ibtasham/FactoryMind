@@ -221,18 +221,21 @@ export const AdvisorPage: React.FC<{
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
         <StatCard
           label="Inventory health"
+          termKey="portfolioHealth"
           value={`${health.score}/100`}
           sub={`${health.label}${health.reasons.length ? ` · ${health.reasons.slice(0, 2).join(', ')}` : ''}`}
           tone={health.score >= 85 ? 'good' : health.score >= 70 ? 'warn' : 'bad'}
         />
         <StatCard
           label="Cash parked"
+          termKey="parkedCash"
           value={fmtMoney(analysis.totals.parkedCash)}
           sub={`Above ${fmtNum(simCover, 1)}-mo cover target`}
           tone={analysis.totals.parkedCash > 0 ? 'warn' : 'good'}
         />
         <StatCard
           label="Replenishment due"
+          termKey="rop"
           value={fmtMoney(analysis.totals.orderValue)}
           sub="At or below ROP"
           tone={analysis.totals.orderValue > 0 ? 'bad' : 'good'}
@@ -473,7 +476,7 @@ export const AdvisorPage: React.FC<{
               </div>
             ))}
           </div>
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex flex-wrap justify-end gap-2 pt-2">
             <Button variant="ghost" onClick={() => setConfirmBulkOpen(false)}>
               Cancel
             </Button>

@@ -3,7 +3,7 @@
  * Pure TypeScript, zero DOM dependencies.
  */
 
-import { csvRow, escapeCsvCell } from './formatters.ts';
+import { csvRow } from './formatters.ts';
 
 export type LotRule = 'l4l' | 'foq' | 'eoq' | 'poq';
 
@@ -285,8 +285,8 @@ export function buildTimeBuckets(horizon: number, bucketSize = 1, startDate?: Da
 export function leadTimeToBuckets(leadTimeDays: number, bucketSize: number): number {
   const lt = num(leadTimeDays) || 0;
   const bs = num(bucketSize) || 1;
-  if (bs <= 0) return 0;
-  return Math.max(0, Math.floor(lt / bs));
+  if (bs <= 0 || lt <= 0) return 0;
+  return Math.max(1, Math.ceil(lt / bs));
 }
 
 export function bomTopology(
@@ -541,7 +541,13 @@ export function mrpPlan({
   const { ordered, levels, hasCycle, missingIds } = bomTopology(rootId, itemMap);
   const missingComponents = missingIds.filter((mid) => !itemMap[mid]);
 
+  const needBi = Math.min(bucketCount - 1, Math.max(0, Math.floor(needDays / bucketSize)));
   const explosionFactor: Record<string, number> = { [rootId]: 1 };
+  const bucketDemand: Record<string, number[]> = {};
+  for (const id of Object.keys(itemMap)) {
+    bucketDemand[id] = new Array<number>(bucketCount).fill(0);
+  }
+
   if (hasCycle) {
     // Bounded path-safe traversal when a circular BOM is present so quantities remain finite
     const accumulateCyclicSafe = (parentId: string, parentFactor: number, ancestors: Set<string>) => {
@@ -563,50 +569,37 @@ export function mrpPlan({
       }
     };
     accumulateCyclicSafe(rootId, 1, new Set([rootId]));
-  } else {
-    const cap2 = Object.keys(itemMap).length + 1;
-    for (let iter = 0; iter < cap2; iter++) {
-      const cur: Record<string, number> = { ...explosionFactor };
-      for (const id of Object.keys(itemMap)) {
-        if (id !== rootId) explosionFactor[id] = 0;
-      }
-      let any = false;
-      for (const id of Object.keys(cur)) {
-        const pf = cur[id] || 0;
-        if (pf <= 0) continue;
-        any = true;
-        const item = itemMap[id];
-        if (!item) continue;
-        for (const b of item.bom) {
-          const childId = b.componentId;
-          const childItem = itemMap[childId];
-          if (!childItem) continue;
-          const childScrap = 1 - (num(childItem.scrapPct) || 0) / 100;
-          const childYield = (num(childItem.yieldPct) || 100) / 100;
-          const childEffYield = Math.max(0.0001, childScrap * childYield);
-          const contribution = (pf * num(b.qtyPer)) / childEffYield;
-          explosionFactor[childId] = (explosionFactor[childId] || 0) + contribution;
-        }
-      }
-      if (!any) break;
+    for (const id of Object.keys(itemMap)) {
+      const grossQty = planQty * (explosionFactor[id] || 0);
+      if (grossQty > 0) bucketDemand[id][needBi] = grossQty;
     }
-  }
-
-  const grossProfiles: MrpPlanResult['grossProfiles'] = {};
-  for (const id of Object.keys(itemMap)) {
-    const factor = explosionFactor[id] || 0;
-    const grossQty = planQty * factor;
-    const bi = Math.min(bucketCount - 1, Math.max(0, Math.floor(needDays / bucketSize)));
-    const profile = new Array<number>(bucketCount).fill(0);
-    if (grossQty > 0 && bi >= 0 && bi < bucketCount) {
-      profile[bi] = grossQty;
+  } else if (itemMap[rootId]) {
+    // Compute nominal static BOM explosionFactor for structural BOM tree display
+    for (const pid of ordered) {
+      const pf = explosionFactor[pid] || 0;
+      if (pf <= 0) continue;
+      const pItem = itemMap[pid];
+      if (!pItem) continue;
+      for (const b of pItem.bom) {
+        const childItem = itemMap[b.componentId];
+        if (!childItem) continue;
+        const childScrap = 1 - (num(childItem.scrapPct) || 0) / 100;
+        const childYield = (num(childItem.yieldPct) || 100) / 100;
+        const childEffYield = Math.max(0.0001, childScrap * childYield);
+        explosionFactor[b.componentId] = (explosionFactor[b.componentId] || 0) + (pf * num(b.qtyPer)) / childEffYield;
+      }
     }
-    grossProfiles[id] = {
-      totalGross: roundTo(grossQty, 4),
-      buckets: profile.map((v) => roundTo(v, 4)),
-      grossReqFn: (b) => num(profile[b]) || 0,
-      needBucket: bi,
-    };
+    if (planQty > 0) bucketDemand[rootId][needBi] = planQty;
+    // Explode root batch down to Level 1 immediately (root planQuantity is planned lot quantity)
+    for (const b of itemMap[rootId].bom) {
+      const childId = b.componentId;
+      const childItem = itemMap[childId];
+      if (!childItem || planQty <= 0) continue;
+      const childScrap = 1 - (num(childItem.scrapPct) || 0) / 100;
+      const childYield = (num(childItem.yieldPct) || 100) / 100;
+      const childEffYield = Math.max(0.0001, childScrap * childYield);
+      bucketDemand[childId][needBi] += (planQty * num(b.qtyPer)) / childEffYield;
+    }
   }
 
   function scheduledReceiptsFor(itemId: string) {
@@ -620,6 +613,7 @@ export function mrpPlan({
       .filter((sr) => sr.qty > 0 && sr.bucketIndex < bucketCount);
   }
 
+  const grossProfiles: MrpPlanResult['grossProfiles'] = {};
   const componentRecords: Record<string, MrpComponentRecord> = {};
   const plannedReleases: PlannedOrderRelease[] = [];
   const shortageAlerts: ShortageAlert[] = [];
@@ -627,11 +621,19 @@ export function mrpPlan({
   const criticalComponents: CriticalComponent[] = [];
 
   for (const id of ordered) {
+    const profileArr = bucketDemand[id] || new Array<number>(bucketCount).fill(0);
+    const totalGrossRaw = sum(profileArr);
+    const firstGrossBi = profileArr.findIndex((v) => v > 0);
+    grossProfiles[id] = {
+      totalGross: roundTo(totalGrossRaw, 4),
+      buckets: profileArr.map((v) => roundTo(v, 4)),
+      grossReqFn: (b) => num(profileArr[b]) || 0,
+      needBucket: firstGrossBi >= 0 ? firstGrossBi : needBi,
+    };
+
     if (id === rootId) continue;
     const item = itemMap[id];
-    if (!item) continue;
-    const profile = grossProfiles[id];
-    if (!profile || profile.totalGross <= 0) continue;
+    if (!item || totalGrossRaw <= 0) continue;
 
     const srList = scheduledReceiptsFor(id);
     const leadTimeBuckets =
@@ -641,7 +643,7 @@ export function mrpPlan({
 
     const mrpRows = buildTimePhasedMRP({
       componentId: id,
-      grossReqFn: profile.grossReqFn,
+      grossReqFn: (b) => num(profileArr[b]) || 0,
       scheduledReceipts: srList,
       initialOnHand: item.onHand,
       safetyStock: item.safetyStock,
@@ -653,6 +655,25 @@ export function mrpPlan({
       periodCount: item.periodCount || 1,
       leadTimeBuckets,
     });
+
+    // In acyclic BOMs, level-by-level Orlicky explosion passes this subassembly's planned order
+    // receipts (offset by its own leadTimeBuckets) down to lower-level children.
+    if (!hasCycle && item.bom.length > 0) {
+      for (let b = 0; b < bucketCount; b++) {
+        const plannedQty = mrpRows[b].plannedOrderReceipt;
+        if (plannedQty <= 0) continue;
+        const childNeedBi = Math.max(0, b - leadTimeBuckets);
+        for (const bl of item.bom) {
+          const childId = bl.componentId;
+          const childItem = itemMap[childId];
+          if (!childItem) continue;
+          const childScrap = 1 - (num(childItem.scrapPct) || 0) / 100;
+          const childYield = (num(childItem.yieldPct) || 100) / 100;
+          const childEffYield = Math.max(0.0001, childScrap * childYield);
+          bucketDemand[childId][childNeedBi] += (plannedQty * num(bl.qtyPer)) / childEffYield;
+        }
+      }
+    }
 
     const lastRow = mrpRows[mrpRows.length - 1];
     const totalPlannedReceipt = sum(mrpRows.map((r) => r.plannedOrderReceipt));
@@ -669,7 +690,7 @@ export function mrpPlan({
       onHand: item.onHand,
       safetyStock: item.safetyStock,
       leadTimeDays: item.leadTimeDays,
-      totalGross: profile.totalGross,
+      totalGross: roundTo(totalGrossRaw, 4),
       totalNetRequirement: roundTo(totalNetReq, 4),
       totalPlannedReceipts: roundTo(totalPlannedReceipt, 4),
       totalPlannedReleases: roundTo(
@@ -700,14 +721,16 @@ export function mrpPlan({
     }
 
     if (totalNetReq > 0) {
-      const needBi = Math.min(bucketCount - 1, Math.max(0, Math.floor(needDays / bucketSize)));
-      const releaseBi = needBi - leadTimeBuckets;
+      const firstNetBi = mrpRows.findIndex((r) => r.netRequirement > 0);
+      const compNeedBi = firstNetBi >= 0 ? firstNetBi : needBi;
+      const compNeedDays = firstNetBi >= 0 ? Math.min(needDays, firstNetBi * bucketSize) : needDays;
+      const releaseBi = compNeedBi - leadTimeBuckets;
       const receiptShortfall = Math.max(0, totalNetReq - totalPlannedReceipt);
       const ssDeficit = Math.max(0, item.safetyStock - finalProjected);
       const effectiveShortfall =
         receiptShortfall > 0.001
           ? receiptShortfall
-          : releaseBi < 0 || item.leadTimeDays > needDays
+          : releaseBi < 0 || item.leadTimeDays > compNeedDays
             ? totalNetReq
             : ssDeficit;
 
@@ -717,7 +740,7 @@ export function mrpPlan({
           componentName: item.name,
           shortfall: roundTo(effectiveShortfall, 4),
           severity:
-            releaseBi < 0 || item.leadTimeDays > needDays || effectiveShortfall > totalNetReq * 0.5
+            releaseBi < 0 || item.leadTimeDays > compNeedDays || effectiveShortfall > totalNetReq * 0.5
               ? 'high'
               : 'medium',
         });
@@ -727,32 +750,33 @@ export function mrpPlan({
         lateOrderWarnings.push({
           componentId: id,
           componentName: item.name,
-          needDate: new Date(start.getTime() + needDays * 86400000),
+          needDate: new Date(start.getTime() + compNeedDays * 86400000),
           releaseBi,
           daysOverdue: Math.abs(releaseBi * bucketSize),
           message: `"${item.name}" must be released ${Math.abs(releaseBi * bucketSize)} days before the planning start — order is past due.`,
         });
       }
-      if (item.leadTimeDays > needDays && totalNetReq > 0 && !componentRecords[id].pastDue) {
+      if (item.leadTimeDays > compNeedDays && totalNetReq > 0 && !componentRecords[id].pastDue) {
         componentRecords[id].pastDue = true;
         lateOrderWarnings.push({
           componentId: id,
           componentName: item.name,
-          needDate: new Date(start.getTime() + needDays * 86400000),
+          needDate: new Date(start.getTime() + compNeedDays * 86400000),
           releaseBi,
-          daysOverdue: Math.ceil(item.leadTimeDays - needDays),
-          message: `"${item.name}" lead time (${item.leadTimeDays} days) exceeds the need date (${needDays} days) — order is past due.`,
+          daysOverdue: Math.ceil(item.leadTimeDays - compNeedDays),
+          message: `"${item.name}" lead time (${item.leadTimeDays} days) exceeds the need date (${compNeedDays} days) — order is past due.`,
         });
       }
     }
 
-    if (profile.totalGross > 0 && item.onHand < profile.totalGross * 0.1) {
+    const compProfile = grossProfiles[id];
+    if (compProfile.totalGross > 0 && item.onHand < compProfile.totalGross * 0.1) {
       criticalComponents.push({
         componentId: id,
         componentName: item.name,
-        gross: profile.totalGross,
+        gross: compProfile.totalGross,
         onHand: item.onHand,
-        deficit: roundTo(profile.totalGross - item.onHand, 4),
+        deficit: roundTo(compProfile.totalGross - item.onHand, 4),
       });
     }
   }
@@ -896,7 +920,7 @@ export function mrpToCSV(plan: MrpPlanResult): string {
   lines.push(csvRow(['Bucket size (days)', Number(plan.bucketSizeDays) || 0]));
   lines.push(csvRow(['Bucket count', Number(plan.bucketCount) || 0]));
   lines.push(csvRow(['Valid', plan.valid ? 'yes' : 'no']));
-  lines.push(csvRow(['Reason', escapeCsvCell(plan.reason || '')]));
+  lines.push(csvRow(['Reason', plan.reason || '']));
   lines.push('');
 
   lines.push('Planned Order Releases');

@@ -31,6 +31,7 @@ import { fmtCover, fmtInt, fmtMoney, fmtNum } from '../engine/formatters';
 import { generateDemandDataset, compareMethods, smaMethod, holtLinear, hwAdditive, seasonalNaive, emaMethod, crostonMethod } from '../engine/forecast';
 import { compareAlgorithms } from '../engine/linebal';
 import { buildDesConfigFromFactorySim, runDiscreteEventSimulation } from '../engine/desEngine';
+import { classifyMachineVisualStatus, formatRackLocation } from '../engine/digitalTwin';
 import { stationsFromLineBalanceForFactory } from '../engine/factorySim';
 import { generateOperationsPdf } from '../engine/pdfReport';
 import {
@@ -126,16 +127,35 @@ export const OneForAllPage: React.FC<{
     const desSim = desCfg ? runDiscreteEventSimulation(desCfg) : null;
     const stations: PlantStationInput[] = (best?.stations || []).map((st, idx) => {
       const telemetry = desSim?.stations[idx];
+      const bufCap = Math.max(1, telemetry?.bufferCapacity ?? factorySimConfig.stations[idx]?.bufferCapacity ?? 6);
+      const qLen = telemetry?.avgQueueLen ?? 0;
+      const utilPct = telemetry
+        ? Math.round(telemetry.assetUtilizationPct)
+        : Math.round((st.time / lineBalance.cycleTime) * 100);
+      const machineState = classifyMachineVisualStatus({
+        queueLen: qLen,
+        bufferCapacity: bufCap,
+        isBottleneck: telemetry?.isBottleneck ?? false,
+        downPct: telemetry?.downPct ?? 0,
+        pmPct: telemetry?.pmPct ?? 0,
+        blockedPct: telemetry?.blockedPct ?? 0,
+        utilizationPct: utilPct,
+      });
       return {
         stationNumber: idx + 1,
-        utilizationPct: telemetry
-          ? Math.round(telemetry.assetUtilizationPct)
-          : Math.round((st.time / lineBalance.cycleTime) * 100),
+        stationId: telemetry?.id || `S${idx + 1}`,
+        stationName: telemetry?.name || `Workstation ${idx + 1}`,
+        utilizationPct: utilPct,
         taskCount: st.tasks.length,
         tasksLabel: st.tasks.map((t) => t.id).join(', '),
         isBottleneck: telemetry?.isBottleneck ?? false,
-        avgQueueLen: telemetry?.avgQueueLen ?? 0,
+        avgQueueLen: qLen,
         throughputPerHour: desSim ? desSim.throughputPerScheduledHour.mean : undefined,
+        machineState,
+        bufferCapacity: bufCap,
+        downPct: telemetry?.downPct ?? 0,
+        pmPct: telemetry?.pmPct ?? 0,
+        blockedPct: telemetry?.blockedPct ?? 0,
       };
     });
     return {
@@ -193,7 +213,7 @@ export const OneForAllPage: React.FC<{
   // Live 3D Plant products
   const plantProducts = useMemo<PlantRackProductInput[]>(
     () =>
-      rows.map(({ p, m }) => ({
+      rows.map(({ p, m }, idx) => ({
         id: p.id,
         sku: p.sku,
         name: p.name,
@@ -202,6 +222,7 @@ export const OneForAllPage: React.FC<{
         rop: m.rop,
         unit: p.unit,
         status: m.status,
+        rackCode: formatRackLocation(idx).code,
       })),
     [rows]
   );
@@ -395,35 +416,41 @@ export const OneForAllPage: React.FC<{
                 )}
 
                 <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-lg">
-                  {reportSnapshot.production.assemblies.map((asm) => {
-                    const ready = asm.shortageCount === 0;
-                    return (
-                      <div key={asm.product.sku} className="px-3 py-2 flex items-center justify-between gap-2 text-xs">
-                        <div className="min-w-0">
-                          <div className="font-medium text-slate-900 dark:text-slate-100 truncate">
-                            {asm.product.name}
+                  {reportSnapshot.production.assemblies.length === 0 ? (
+                    <div className="px-3 py-4 text-center text-xs text-slate-500 dark:text-slate-400">
+                      No BOM assemblies defined in the current workspace.
+                    </div>
+                  ) : (
+                    reportSnapshot.production.assemblies.map((asm) => {
+                      const ready = asm.shortageCount === 0;
+                      return (
+                        <div key={asm.product.sku} className="px-3 py-2 flex items-center justify-between gap-2 text-xs">
+                          <div className="min-w-0">
+                            <div className="font-medium text-slate-900 dark:text-slate-100 truncate">
+                              {asm.product.name}
+                            </div>
+                            <div className="font-mono text-[11px] text-slate-500">
+                              {asm.product.sku} · On hand {fmtInt(asm.product.stock)}
+                            </div>
                           </div>
-                          <div className="font-mono text-[11px] text-slate-500">
-                            {asm.product.sku} · On hand {fmtInt(asm.product.stock)}
+                          <div className="text-right shrink-0">
+                            <div
+                              className={`font-mono text-xs font-semibold ${
+                                ready
+                                  ? 'text-emerald-600 dark:text-emerald-400'
+                                  : 'text-amber-600 dark:text-amber-400'
+                              }`}
+                            >
+                              {ready ? 'Ready' : `${asm.shortageCount} short`}
+                            </div>
+                            <div className="font-mono text-[11px] text-slate-500">
+                              {fmtMoney(asm.netReqSpend)}
+                            </div>
                           </div>
                         </div>
-                        <div className="text-right shrink-0">
-                          <div
-                            className={`font-mono text-xs font-semibold ${
-                              ready
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : 'text-amber-600 dark:text-amber-400'
-                            }`}
-                          >
-                            {ready ? 'Ready' : `${asm.shortageCount} short`}
-                          </div>
-                          <div className="font-mono text-[11px] text-slate-500">
-                            {fmtMoney(asm.netReqSpend)}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  )}
                 </div>
               </div>
             </div>

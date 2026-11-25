@@ -7,11 +7,14 @@ import {
   ActionLogEntry,
   BomLine,
   createSafeStorage,
+  CsvImportResult,
   FactoryStore,
+  JsonValidationReport,
   PersistedLineBalance,
   Product,
   ProductMetrics,
   ProductSnapshot,
+  StorageHealth,
   Transaction,
   WorkspaceSettings,
   WorkspaceSummary,
@@ -37,6 +40,18 @@ interface StoreContextValue {
   completeOnboardingStep: (stepId: string) => void;
   resetOnboarding: () => void;
   storageMode: string;
+  storageHealth: StorageHealth;
+  undoLastWorkspaceReplace: () => boolean;
+  getCorruptedBackupRaw: () => string | null;
+  dismissCorruptedBackup: () => void;
+  validateJSONImport: (text: string) => JsonValidationReport;
+  validateProductsCSV: (text: string) => {
+    valid: boolean;
+    wouldCreate: number;
+    wouldUpdate: number;
+    skipped: Array<{ line: number; reason: string }>;
+    fatalError?: string;
+  };
   version: number;
   metricsOf: (p: Product) => ProductMetrics;
   getProduct: (id: string) => Product | null;
@@ -67,7 +82,7 @@ interface StoreContextValue {
   exportProductsCSV: () => string;
   exportTransactionsCSV: () => string;
   csvTemplate: () => string;
-  importProductsCSV: (text: string) => { created: number; updated: number; skipped: Array<{ line: number; reason: string }> };
+  importProductsCSV: (text: string) => CsvImportResult;
   toasts: ToastMessage[];
   pushToast: (t: Omit<ToastMessage, 'id'>) => void;
   dismissToast: (id: string) => void;
@@ -121,6 +136,18 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((item) => item.id !== id));
   }, []);
+
+  const corruptWarnedRef = useRef(false);
+  useEffect(() => {
+    const health = store.getStorageHealth();
+    if (health.corruptedDetected && !corruptWarnedRef.current) {
+      corruptWarnedRef.current = true;
+      pushToast({
+        type: 'error',
+        message: 'Saved browser storage was corrupted and quarantined — open Settings to recover or reset.',
+      });
+    }
+  }, [store, pushToast]);
 
   const settings = store.settings();
 
@@ -184,6 +211,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         bump();
       },
       storageMode: store.storageMode,
+      storageHealth: store.getStorageHealth(),
+      undoLastWorkspaceReplace: () => {
+        const ok = store.undoLastWorkspaceReplace();
+        bump();
+        return ok;
+      },
+      getCorruptedBackupRaw: () => store.getCorruptedBackupRaw(),
+      dismissCorruptedBackup: () => {
+        store.dismissCorruptedBackup();
+        bump();
+      },
+      validateJSONImport: (text) => store.validateJSONImport(text).report,
+      validateProductsCSV: (text) => store.validateProductsCSV(text),
       version,
       metricsOf: (p: Product) => store.metrics(p),
       getProduct: (id: string) => store.getProduct(id),

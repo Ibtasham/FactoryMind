@@ -1,14 +1,22 @@
 import React, { useRef, useState } from 'react';
-import { Compass, Download, History, Keyboard, Play, RotateCcw, Trash2, Upload } from 'lucide-react';
+import { AlertTriangle, Compass, Download, History, Keyboard, Play, RotateCcw, Trash2, Undo2, Upload } from 'lucide-react';
 import {
   Button,
   ConfirmDialog,
   DatasetProvenanceIndicator,
   downloadFile,
+  ErrorBanner,
   Panel,
   SegmentedControl,
 } from '../components/ui/Primitives';
 import { useStore } from '../store/StoreContext';
+
+interface ImportReportState {
+  kind: 'json' | 'csv';
+  status: 'error' | 'warn' | 'success';
+  title: string;
+  details: string[];
+}
 
 export const SettingsPage: React.FC<{
   onOpenShortcuts: () => void;
@@ -19,9 +27,14 @@ export const SettingsPage: React.FC<{
   const {
     settings,
     storageMode,
+    storageHealth,
+    undoLastWorkspaceReplace,
+    getCorruptedBackupRaw,
+    dismissCorruptedBackup,
     datasetProvenance,
     setSetting,
     exportJSON,
+    validateJSONImport,
     importJSON,
     exportProductsCSV,
     exportTransactionsCSV,
@@ -35,17 +48,41 @@ export const SettingsPage: React.FC<{
   const jsonFileRef = useRef<HTMLInputElement | null>(null);
   const csvFileRef = useRef<HTMLInputElement | null>(null);
   const [confirmMode, setConfirmMode] = useState<'reset' | 'clear' | null>(null);
+  const [importReport, setImportReport] = useState<ImportReportState | null>(null);
 
   const handleJsonUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
+    reader.onerror = () => {
+      pushToast({ type: 'error', message: `Could not read "${file.name}".` });
+    };
     reader.onload = () => {
+      const raw = String(reader.result || '');
+      const validation = validateJSONImport(raw);
+      if (!validation.valid) {
+        setImportReport({
+          kind: 'json',
+          status: 'error',
+          title: `JSON backup "${file.name}" failed validation — existing workspace untouched.`,
+          details: validation.errors.slice(0, 8).map((err) => `${err.path}: ${err.message}`),
+        });
+        pushToast({ type: 'error', message: validation.errors[0]?.message || 'Invalid JSON backup.' });
+        return;
+      }
       try {
-        const count = importJSON(String(reader.result || ''));
+        const count = importJSON(raw);
+        setImportReport({
+          kind: 'json',
+          status: 'success',
+          title: `Restored ${count} SKUs and ${validation.transactionCount} transactions from JSON backup (schema v${validation.schemaVersion}).`,
+          details: validation.warnings,
+        });
         pushToast({ type: 'success', message: `Restored ${count} SKUs from JSON backup.` });
       } catch (err) {
-        pushToast({ type: 'error', message: (err as Error).message });
+        const msg = err instanceof Error ? err.message : 'Unable to import JSON backup.';
+        setImportReport({ kind: 'json', status: 'error', title: 'JSON restore rejected', details: [msg] });
+        pushToast({ type: 'error', message: msg });
       }
     };
     reader.readAsText(file);
@@ -56,15 +93,39 @@ export const SettingsPage: React.FC<{
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
+    reader.onerror = () => {
+      pushToast({ type: 'error', message: `Could not read "${file.name}".` });
+    };
     reader.onload = () => {
       try {
         const res = importProductsCSV(String(reader.result || ''));
-        pushToast({
-          type: 'success',
-          message: `CSV import: ${res.created} created, ${res.updated} updated.`,
-        });
+        if (res.created === 0 && res.updated === 0 && res.skipped.length > 0) {
+          setImportReport({
+            kind: 'csv',
+            status: 'error',
+            title: `CSV import skipped all ${res.skipped.length} row(s) — existing workspace untouched.`,
+            details: res.skipped.slice(0, 8).map((s) => `Line ${s.line}: ${s.reason}`),
+          });
+          pushToast({
+            type: 'error',
+            message: `CSV import skipped all ${res.skipped.length} row(s): ${res.skipped[0].reason}.`,
+          });
+        } else {
+          setImportReport({
+            kind: 'csv',
+            status: res.skipped.length > 0 ? 'warn' : 'success',
+            title: `CSV import: ${res.created} created, ${res.updated} updated${res.skipped.length ? `, ${res.skipped.length} skipped` : ''}.`,
+            details: res.skipped.slice(0, 8).map((s) => `Line ${s.line}: ${s.reason}`),
+          });
+          pushToast({
+            type: res.skipped.length > 0 ? 'warn' : 'success',
+            message: `CSV import: ${res.created} created, ${res.updated} updated${res.skipped.length ? `, ${res.skipped.length} skipped` : ''}.`,
+          });
+        }
       } catch (err) {
-        pushToast({ type: 'error', message: (err as Error).message });
+        const msg = err instanceof Error ? err.message : 'Malformed CSV file.';
+        setImportReport({ kind: 'csv', status: 'error', title: `CSV import rejected (${file.name})`, details: [msg] });
+        pushToast({ type: 'error', message: msg });
       }
     };
     reader.readAsText(file);
@@ -78,8 +139,68 @@ export const SettingsPage: React.FC<{
     { id: 'violet', label: 'Violet', dot: 'bg-violet-600' },
   ];
 
+  const storageSubtitle =
+    storageHealth.status === 'corrupted'
+      ? 'Storage recovery mode (corrupted data quarantined — download or restore below)'
+      : storageHealth.status === 'quota_exceeded'
+        ? `Browser quota limit hit (~${Math.round(storageHealth.estimatedBytes / 1024)} KB) — edits kept in memory until exported`
+        : storageMode === 'localStorage'
+          ? `Browser localStorage (persistent · ~${Math.max(1, Math.round(storageHealth.estimatedBytes / 1024))} KB)`
+          : 'In-memory session (browser storage unavailable)';
+
   return (
     <div className="space-y-4 max-w-4xl">
+      {storageHealth.corruptedDetected && (
+        <ErrorBanner
+          title="Saved workspace storage was corrupted — recovered safely without overwriting with sample data"
+          message={
+            storageHealth.lastError ||
+            'Your previous browser storage payload could not be parsed cleanly. It has been preserved in quarantine so you can download it or restore a clean backup.'
+          }
+          action={
+            <div className="flex flex-wrap gap-2">
+              {getCorruptedBackupRaw() && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => downloadFile('factorymind-corrupted-raw.json', getCorruptedBackupRaw() || '', 'application/json')}
+                >
+                  <Download className="h-3.5 w-3.5" /> Download raw data
+                </Button>
+              )}
+              <Button size="sm" variant="secondary" onClick={() => jsonFileRef.current?.click()}>
+                <Upload className="h-3.5 w-3.5" /> Restore JSON
+              </Button>
+              <Button size="sm" variant="ghost" onClick={dismissCorruptedBackup}>
+                Dismiss quarantine
+              </Button>
+            </div>
+          }
+        />
+      )}
+
+      {storageHealth.quotaExceeded && !storageHealth.corruptedDetected && (
+        <div
+          role="alert"
+          className="rounded-lg border border-amber-300/80 dark:border-amber-800/80 bg-amber-50/70 dark:bg-amber-950/35 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
+        >
+          <div className="flex items-start gap-2.5 min-w-0">
+            <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <div className="text-xs font-semibold text-amber-900 dark:text-amber-200">
+                Browser localStorage quota reached (~{Math.round(storageHealth.estimatedBytes / 1024)} KB)
+              </div>
+              <p className="text-xs text-amber-800 dark:text-amber-300/90 mt-0.5">
+                Recent changes are preserved in active memory. Export a JSON backup now so nothing is lost on tab close.
+              </p>
+            </div>
+          </div>
+          <Button size="sm" variant="secondary" onClick={() => downloadFile('factorymind-backup.json', exportJSON(), 'application/json')}>
+            <Download className="h-3.5 w-3.5" /> Export JSON backup
+          </Button>
+        </div>
+      )}
+
       <DatasetProvenanceIndicator provenance={datasetProvenance} />
 
       <Panel title="Appearance & accessibility" subtitle="Theme and accent preferences save automatically">
@@ -148,15 +269,33 @@ export const SettingsPage: React.FC<{
 
       <Panel
         title="Data portability & backups"
-        subtitle={`Storage backend: ${storageMode === 'localStorage' ? 'Browser localStorage (persistent)' : 'In-memory session'}`}
+        subtitle={`Storage backend: ${storageSubtitle}`}
+        actions={
+          storageHealth.canUndoLastReplace ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                if (undoLastWorkspaceReplace()) {
+                  setImportReport(null);
+                  pushToast({ type: 'success', message: 'Reverted previous workspace replacement.' });
+                }
+              }}
+            >
+              <Undo2 className="h-3.5 w-3.5" /> Undo last replace
+            </Button>
+          ) : undefined
+        }
       >
         <input ref={jsonFileRef} type="file" accept=".json,application/json" className="hidden" onChange={handleJsonUpload} />
         <input ref={csvFileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleCsvUpload} />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-2.5">
-            <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">Full JSON Workspace Snapshot</div>
-            <p className="text-xs text-slate-600 dark:text-slate-300">Includes all SKUs, BOMs, demand histories, transactions, scenarios, and settings.</p>
+            <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">Full JSON Workspace Snapshot (Schema v2)</div>
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              Includes all SKUs, BOMs, demand histories, transactions, line balance, scenarios, and settings. Validates schema and duplicates before applying.
+            </p>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="secondary" onClick={() => downloadFile('factorymind-backup.json', exportJSON(), 'application/json')}>
                 <Download className="h-3.5 w-3.5" /> Export JSON
@@ -169,7 +308,9 @@ export const SettingsPage: React.FC<{
 
           <div className="space-y-2.5">
             <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">CSV Spreadsheets</div>
-            <p className="text-xs text-slate-600 dark:text-slate-300">Export inventory or stock ledger tables, or import SKUs from a CSV template.</p>
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              Formula-escaped CSV exports for inventory or stock ledger, plus line-validated SKU imports with duplicate detection.
+            </p>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="secondary" onClick={() => downloadFile('factorymind-inventory.csv', exportProductsCSV(), 'text/csv')}>
                 Inventory CSV
@@ -186,6 +327,33 @@ export const SettingsPage: React.FC<{
             </div>
           </div>
         </div>
+
+        {importReport && (
+          <div
+            role={importReport.status === 'error' ? 'alert' : 'status'}
+            className={`mt-4 rounded-lg border p-3 text-xs ${
+              importReport.status === 'error'
+                ? 'border-rose-300/80 dark:border-rose-800/80 bg-rose-50/70 dark:bg-rose-950/30 text-rose-800 dark:text-rose-200'
+                : importReport.status === 'warn'
+                  ? 'border-amber-300/80 dark:border-amber-800/80 bg-amber-50/70 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200'
+                  : 'border-emerald-300/80 dark:border-emerald-800/80 bg-emerald-50/70 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-200'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2 font-semibold">
+              <span>{importReport.title}</span>
+              <button type="button" onClick={() => setImportReport(null)} className="underline text-[11px] cursor-pointer">
+                Dismiss
+              </button>
+            </div>
+            {importReport.details.length > 0 && (
+              <ul className="mt-1.5 list-disc list-inside space-y-0.5 font-mono text-[11px]">
+                {importReport.details.map((d, i) => (
+                  <li key={i}>{d}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </Panel>
 
       <Panel title="Workspace controls & attribution" subtitle="Reset demo catalogue, inspect action history, guided tour, and shortcuts">
@@ -228,12 +396,13 @@ export const SettingsPage: React.FC<{
         title={confirmMode === 'reset' ? 'Reset demo workspace?' : 'Clear entire workspace?'}
         message={
           confirmMode === 'reset'
-            ? 'Restores the 17 seeded industrial SKUs, 5 BOMs, and 34 transactions. Any unsaved edits will be replaced.'
-            : 'Removes every SKU and ledger entry from storage so you can start with a blank plant dataset.'
+            ? 'Restores the 17 seeded industrial SKUs, 5 BOMs, and 34 transactions. An undo snapshot of your current workspace will be kept for this session.'
+            : 'Removes every SKU and ledger entry from storage so you can start with a blank plant dataset. An undo snapshot will be kept for this session.'
         }
         confirmLabel={confirmMode === 'reset' ? 'Confirm reset' : 'Confirm clear'}
         danger={confirmMode === 'clear'}
         onConfirm={() => {
+          setImportReport(null);
           if (confirmMode === 'reset') {
             resetDemo();
             pushToast({ type: 'success', message: 'Demo workspace restored (17 SKUs, 34 movements).' });

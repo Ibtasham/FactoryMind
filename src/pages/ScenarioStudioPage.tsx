@@ -21,6 +21,7 @@ import { RouteId } from '../components/layout/AppShell';
 import {
   AssumptionPanel,
   Button,
+  ConfirmDialog,
   EmptyState,
   Field,
   Input,
@@ -89,6 +90,7 @@ export const ScenarioStudioPage: React.FC<{
   const [sensitivityRows, setSensitivityRows] = useState<ScenarioSensitivityRow[]>([]);
   const [sensitivityStamp, setSensitivityStamp] = useState<string>('');
   const [applyModalOpen, setApplyModalOpen] = useState<boolean>(false);
+  const [pendingDeleteScenario, setPendingDeleteScenario] = useState<{ id: string; name: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const assemblyOptions = useMemo(() => {
@@ -445,12 +447,8 @@ export const ScenarioStudioPage: React.FC<{
                           <button
                             type="button"
                             aria-label={`Delete scenario ${rec.name}`}
-                            onClick={() => {
-                              deleteScenarioStudioRecord(rec.id);
-                              if (selectedId === rec.id) setSelectedId('custom-draft');
-                              pushToast({ type: 'info', message: `Deleted scenario "${rec.name}".` });
-                            }}
-                            className="p-1 text-slate-400 hover:text-rose-500 cursor-pointer"
+                            onClick={() => setPendingDeleteScenario({ id: rec.id, name: rec.name })}
+                            className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -459,10 +457,29 @@ export const ScenarioStudioPage: React.FC<{
                     })}
                   </div>
                 ) : (
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 py-1">
+                  <p className="text-[11px] text-slate-600 dark:text-slate-300 py-1">
                     No custom scenarios saved yet. Adjust parameters below and click Save to Vault.
                   </p>
                 )}
+                <ConfirmDialog
+                  open={pendingDeleteScenario !== null}
+                  onClose={() => setPendingDeleteScenario(null)}
+                  onConfirm={() => {
+                    if (pendingDeleteScenario) {
+                      deleteScenarioStudioRecord(pendingDeleteScenario.id);
+                      if (selectedId === pendingDeleteScenario.id) setSelectedId('custom-draft');
+                      pushToast({ type: 'info', message: `Deleted scenario "${pendingDeleteScenario.name}".` });
+                    }
+                  }}
+                  title={pendingDeleteScenario ? `Delete "${pendingDeleteScenario.name}"?` : 'Delete scenario?'}
+                  message={
+                    pendingDeleteScenario
+                      ? `Permanently delete "${pendingDeleteScenario.name}" from your Scenario Studio Vault?`
+                      : ''
+                  }
+                  confirmLabel="Delete scenario"
+                  danger
+                />
               </div>
             </div>
           </Panel>

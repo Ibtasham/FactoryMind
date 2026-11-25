@@ -33,7 +33,7 @@ export function clampNumericInput(
 
 export function escapeCsvCell(v: unknown): string {
   const raw = String(v == null ? '' : v);
-  const safe = /^[\t\r ]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  const safe = /^(?:[\t\r ]*[=+\-@]|[\t\r])/.test(raw) ? `'${raw}` : raw;
   return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 

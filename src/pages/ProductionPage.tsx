@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Box, Download, Edit3, Factory, Plus, Trash2 } from 'lucide-react';
 import { RouteId } from '../components/layout/AppShell';
 import { AssumptionPanel, Button, downloadFile, EmptyState, Field, Input, Panel, Select, StatCard } from '../components/ui/Primitives';
@@ -42,6 +42,17 @@ export const ProductionPage: React.FC<{
   const [rcptComponentId, setRcptComponentId] = useState<string>(products[0]?.id || '');
   const [rcptQty, setRcptQty] = useState<number>(20);
   const [rcptDays, setRcptDays] = useState<number>(7);
+
+  useEffect(() => {
+    const validIds = new Set(products.map((p) => p.id));
+    if (!validIds.has(rcptComponentId)) {
+      setRcptComponentId(products[0]?.id || '');
+    }
+    if (rootId && !validIds.has(rootId)) {
+      setRootId(defaultRoot?.id || '');
+    }
+    setOpenReceipts((prev) => prev.filter((r) => validIds.has(r.componentId)));
+  }, [products, rcptComponentId, rootId, defaultRoot]);
 
   const activeRoot = products.find((p) => p.id === rootId) || defaultRoot;
 
@@ -140,8 +151,8 @@ export const ProductionPage: React.FC<{
           </div>
         }
       >
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <div className="col-span-2">
+        <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="sm:col-span-2">
             <Field label="Parent assembly / SKU">
               <Select value={activeRoot.id} onChange={(e) => setRootId(e.target.value)}>
                 {products.map((p) => (
@@ -267,14 +278,16 @@ export const ProductionPage: React.FC<{
       </Panel>
 
       {/* Summary KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         <StatCard
           label="BOM components exploded"
+          termKey="lowLevelCode"
           value={fmtInt(plan.summary.componentCount)}
           sub={`Gross req ${fmtInt(plan.summary.totalGrossRequirements)} units`}
         />
         <StatCard
           label="Net requirements"
+          termKey="mrpNet"
           value={fmtInt(plan.summary.totalNetRequirements)}
           sub={`Planned receipts ${fmtInt(plan.summary.totalPlannedReceipts)}`}
           tone={plan.summary.totalNetRequirements > 0 ? 'warn' : 'good'}
@@ -369,36 +382,58 @@ export const ProductionPage: React.FC<{
 
         <Panel title="Planned order releases" subtitle="Lead-time-offset procurement & shop-floor orders" className="lg:col-span-7">
           {plan.plannedOrderReleases.length ? (
-            <div className="overflow-x-auto -mx-4 px-4">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-800 text-left text-[11px] text-slate-500">
-                    <th className="pb-2 font-medium">Component</th>
-                    <th className="pb-2 font-medium">Bucket</th>
-                    <th className="pb-2 font-medium">Release date</th>
-                    <th className="pb-2 font-medium text-right">Lead time</th>
-                    <th className="pb-2 font-medium text-right">Order qty</th>
-                    <th className="pb-2 font-medium text-right">Rule</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
-                  {plan.plannedOrderReleases.map((r, i) => (
-                    <tr key={i} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                      <td className="py-2 pr-3 font-medium text-slate-900 dark:text-slate-100">{r.componentName}</td>
-                      <td className="py-2 pr-3 font-mono text-slate-500">P{r.bucketIndex + 1}</td>
-                      <td className="py-2 pr-3 font-mono">{shortDate(r.releaseDate.getTime())}</td>
-                      <td className="py-2 pr-3 text-right font-mono tabular-nums">{r.leadTimeDays}d</td>
-                      <td className="py-2 pr-3 text-right font-mono tabular-nums font-semibold text-blue-600 dark:text-blue-400">
+            <>
+              <div className="md:hidden space-y-2">
+                {plan.plannedOrderReleases.map((r, i) => (
+                  <div
+                    key={i}
+                    className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/50 p-3 space-y-1.5"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">{r.componentName}</span>
+                      <span className="font-mono text-xs font-semibold text-blue-700 dark:text-blue-400 shrink-0">
                         {fmtInt(r.quantity)}
-                      </td>
-                      <td className="py-2 text-right font-mono uppercase text-slate-500">{r.lotRule}</td>
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-slate-600 dark:text-slate-300">
+                      <span>P{r.bucketIndex + 1} · {shortDate(r.releaseDate.getTime())}</span>
+                      <span className="uppercase">{r.leadTimeDays}d LT · {r.lotRule}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="hidden md:block overflow-x-auto -mx-4 px-4">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200 dark:border-slate-800 text-left text-[11px] text-slate-600 dark:text-slate-300">
+                      <th scope="col" className="pb-2 font-medium">Component</th>
+                      <th scope="col" className="pb-2 font-medium">Bucket</th>
+                      <th scope="col" className="pb-2 font-medium">Release date</th>
+                      <th scope="col" className="pb-2 font-medium text-right">Lead time</th>
+                      <th scope="col" className="pb-2 font-medium text-right">Order qty</th>
+                      <th scope="col" className="pb-2 font-medium text-right">Rule</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                    {plan.plannedOrderReleases.map((r, i) => (
+                      <tr key={i} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                        <td className="py-2 pr-3 font-medium text-slate-900 dark:text-slate-100">{r.componentName}</td>
+                        <td className="py-2 pr-3 font-mono text-slate-600 dark:text-slate-300">P{r.bucketIndex + 1}</td>
+                        <td className="py-2 pr-3 font-mono">{shortDate(r.releaseDate.getTime())}</td>
+                        <td className="py-2 pr-3 text-right font-mono tabular-nums">{r.leadTimeDays}d</td>
+                        <td className="py-2 pr-3 text-right font-mono tabular-nums font-semibold text-blue-700 dark:text-blue-400">
+                          {fmtInt(r.quantity)}
+                        </td>
+                        <td className="py-2 text-right font-mono uppercase text-slate-600 dark:text-slate-300">{r.lotRule}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           ) : (
-            <div className="text-xs text-slate-500 py-6 text-center">
+            <div className="text-xs text-slate-600 dark:text-slate-300 py-6 text-center">
               All gross requirements are covered by existing on-hand inventory.
             </div>
           )}
@@ -411,8 +446,9 @@ export const ProductionPage: React.FC<{
           title={`Time-phased MRP schedule · ${activeComponent.sku} (${activeComponent.name})`}
           subtitle={`On hand: ${fmtInt(activeComponent.onHand)} · Safety stock: ${fmtInt(activeComponent.safetyStock)} · Lead time: ${activeComponent.leadTimeDays}d`}
           actions={
-            <div className="w-64">
+            <div className="w-full sm:w-64">
               <Select
+                aria-label="Inspect component time-phased MRP schedule"
                 value={activeComponent.id}
                 onChange={(e) => setSelectedComponentId(e.target.value)}
               >

@@ -131,52 +131,115 @@ export interface ProductSnapshot {
   transactions: Transaction[];
 }
 
+export const CURRENT_SCHEMA_VERSION = 2;
 const DB_STORAGE_KEY = 'factorymind.db.v3';
+const LEGACY_STORAGE_KEYS = ['factorymind.db.v2', 'factorymind.db.v1', 'factorymind.db'] as const;
+const CORRUPT_BACKUP_KEY = 'factorymind.db.corrupt_backup';
+
+export type StorageHealthStatus = 'ok' | 'memory_only' | 'quota_exceeded' | 'corrupted';
+
+export interface StorageHealth {
+  status: StorageHealthStatus;
+  persisted: boolean;
+  quotaExceeded: boolean;
+  corruptedDetected: boolean;
+  estimatedBytes: number;
+  corruptedRaw: string | null;
+  canUndoLastReplace: boolean;
+  lastError?: string;
+}
+
+export interface ValidationIssue {
+  path: string;
+  message: string;
+}
+
+export interface JsonValidationReport {
+  valid: boolean;
+  migratedFromVersion: number;
+  schemaVersion: number;
+  productCount: number;
+  transactionCount: number;
+  errors: ValidationIssue[];
+  warnings: string[];
+}
+
+export interface CsvImportResult {
+  created: number;
+  updated: number;
+  skipped: Array<{ line: number; reason: string }>;
+  warnings?: string[];
+}
 
 export interface StorageBackend {
   persistent: boolean;
   get(key: string): string | null;
-  set(key: string, value: string): void;
+  set(key: string, value: string): boolean | void;
   del(key: string): void;
+  lastError?: () => string | null;
 }
 
 export function createSafeStorage(onError?: (err: unknown) => void): StorageBackend {
   let ls: Storage | null = null;
   const mem: Record<string, string> = {};
+  const memDirty = new Set<string>();
+  let lastErrMsg: string | null = null;
   try {
     if (typeof globalThis !== 'undefined' && 'localStorage' in globalThis && globalThis.localStorage) {
       ls = globalThis.localStorage;
       ls.setItem('__fm_probe__', '1');
       ls.removeItem('__fm_probe__');
     }
-  } catch {
+  } catch (err) {
+    lastErrMsg = err instanceof Error ? err.message : 'Browser storage unavailable';
     ls = null;
   }
   return {
     persistent: !!ls,
+    lastError: () => lastErrMsg,
     get(k: string) {
+      if (memDirty.has(k)) {
+        return k in mem ? mem[k] : null;
+      }
       try {
-        return ls ? ls.getItem(k) : k in mem ? mem[k] : null;
-      } catch {
+        if (ls) {
+          const val = ls.getItem(k);
+          if (val !== null) return val;
+        }
+        return k in mem ? mem[k] : null;
+      } catch (err) {
+        lastErrMsg = err instanceof Error ? err.message : 'Failed reading browser storage';
         return k in mem ? mem[k] : null;
       }
     },
-    set(k: string, v: string) {
+    set(k: string, v: string): boolean {
       try {
-        if (ls) ls.setItem(k, v);
-        else mem[k] = v;
+        if (ls) {
+          ls.setItem(k, v);
+          mem[k] = v;
+          memDirty.delete(k);
+          lastErrMsg = null;
+          return true;
+        }
+        mem[k] = v;
+        lastErrMsg = null;
+        return true;
       } catch (err) {
         mem[k] = v;
+        memDirty.add(k);
+        lastErrMsg = err instanceof Error ? err.message : 'Storage write failed';
         if (onError) onError(err);
+        return false;
       }
     },
     del(k: string) {
       try {
         if (ls) ls.removeItem(k);
-        delete mem[k];
       } catch {
-        delete mem[k];
+        // ignore removal error on restricted storage
       }
+      delete mem[k];
+      memDirty.delete(k);
     },
   };
 }
@@ -342,7 +405,7 @@ export function createSeedDB(): WorkspaceDB {
   });
 
   return {
-    version: 1,
+    version: CURRENT_SCHEMA_VERSION,
     seededAt: Date.now(),
     products,
     transactions: seedTransactions(products),
@@ -603,7 +666,7 @@ export function normalizeDB(obj: Partial<WorkspaceDB>): WorkspaceDB {
     : [];
 
   return {
-    version: 1,
+    version: CURRENT_SCHEMA_VERSION,
     seededAt: num(obj.seededAt, Date.now()),
     products,
     transactions,
@@ -615,6 +678,36 @@ export function normalizeDB(obj: Partial<WorkspaceDB>): WorkspaceDB {
     ...(factoryScenarios.length ? { factoryScenarios } : {}),
     ...(scenarioStudioRecords.length ? { scenarioStudioRecords } : {}),
     ...(actionLog.length ? { actionLog } : {}),
+  };
+}
+
+export function migrateWorkspacePayload(raw: unknown): {
+  migratedFrom: number;
+  data: Partial<WorkspaceDB>;
+  notes: string[];
+} {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('Backup payload must be a JSON object.');
+  }
+  const obj = raw as Record<string, unknown>;
+  const rawVer = obj.version ?? obj.schemaVersion;
+  const ver = rawVer === undefined || rawVer === null ? 0 : Number(rawVer);
+  if (!Number.isFinite(ver) || ver < 0 || !Number.isInteger(ver)) {
+    throw new Error(`Invalid backup schema version "${String(rawVer)}".`);
+  }
+  if (ver > CURRENT_SCHEMA_VERSION) {
+    throw new Error(
+      `Backup uses newer schema v${ver} (supported up to v${CURRENT_SCHEMA_VERSION}). Update FactoryMind before restoring.`
+    );
+  }
+  const notes: string[] = [];
+  if (ver < CURRENT_SCHEMA_VERSION) {
+    notes.push(`Migrated schema from v${ver} to v${CURRENT_SCHEMA_VERSION}.`);
+  }
+  return {
+    migratedFrom: ver,
+    data: { ...(obj as Partial<WorkspaceDB>), version: CURRENT_SCHEMA_VERSION },
+    notes,
   };
 }
 
@@ -655,8 +748,63 @@ export function toCSV(header: string[], rows: Array<Array<string | number>>): st
   return [header.map(escapeCsvCell).join(','), ...rows.map((r) => r.map(escapeCsvCell).join(','))].join('\r\n');
 }
 
+export function parseCSVStrict(text: string): string[][] {
+  if (typeof text !== 'string') {
+    throw new Error('CSV input must be text.');
+  }
+  if (text.length > 5_000_000) {
+    throw new Error('CSV file exceeds the 5 MB limit.');
+  }
+  const cleaned = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < cleaned.length; i++) {
+    const c = cleaned[i];
+    if (quoted) {
+      if (c === '"') {
+        if (cleaned[i + 1] === '"') {
+          cell += '"';
+          i++;
+        } else {
+          quoted = false;
+        }
+      } else {
+        cell += c;
+      }
+    } else if (c === '"') {
+      if (cell.trim() !== '') {
+        throw new Error(`Malformed CSV at line ${rows.length + 1}: unexpected quotation mark inside unquoted field.`);
+      }
+      cell = '';
+      quoted = true;
+    } else if (c === ',') {
+      row.push(cell);
+      cell = '';
+    } else if (c === '\n') {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+    } else {
+      cell += c;
+    }
+  }
+  if (quoted) {
+    throw new Error(`Malformed CSV near line ${rows.length + 1}: unclosed quotation mark before end of file.`);
+  }
+  if (cell !== '' || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows.filter((r) => r.some((v) => String(v).trim() !== ''));
+}
+
 export function parseCSV(text: string): string[][] {
-  const s = String(text == null ? '' : text).replace(/\r\n?/g, '\n');
+  const s = String(text == null ? '' : text)
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n?/g, '\n');
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = '';
@@ -699,35 +847,159 @@ export class FactoryStore {
   db: WorkspaceDB;
   private storage: StorageBackend;
   readonly storageMode: string;
+  private quotaExceeded = false;
+  private corruptedDetected = false;
+  private corruptedRaw: string | null = null;
+  private lastStorageError: string | undefined;
+  private estimatedBytes = 0;
+  private rollbackSnapshot: WorkspaceDB | null = null;
 
   constructor(storage: StorageBackend = createSafeStorage()) {
     this.storage = storage;
     this.storageMode = storage.persistent ? 'localStorage' : 'memory';
     this.db = this.loadOrSeed();
+    if (!this.corruptedDetected) {
+      this.estimatedBytes = JSON.stringify(this.db).length;
+    }
+  }
+
+  getStorageHealth(): StorageHealth {
+    return {
+      status: this.corruptedDetected
+        ? 'corrupted'
+        : this.quotaExceeded
+          ? 'quota_exceeded'
+          : this.storage.persistent
+            ? 'ok'
+            : 'memory_only',
+      persisted: this.storage.persistent && !this.quotaExceeded && !this.corruptedDetected,
+      quotaExceeded: this.quotaExceeded,
+      corruptedDetected: this.corruptedDetected,
+      estimatedBytes: this.estimatedBytes,
+      corruptedRaw: this.corruptedRaw,
+      canUndoLastReplace: this.rollbackSnapshot !== null,
+      lastError: this.lastStorageError,
+    };
+  }
+
+  getCorruptedBackupRaw(): string | null {
+    return this.corruptedRaw ?? this.storage.get(CORRUPT_BACKUP_KEY);
+  }
+
+  dismissCorruptedBackup(): void {
+    this.corruptedDetected = false;
+    this.corruptedRaw = null;
+    this.storage.del(CORRUPT_BACKUP_KEY);
+    this.save();
+  }
+
+  private captureRollbackSnapshot(): void {
+    this.rollbackSnapshot = JSON.parse(JSON.stringify(this.db)) as WorkspaceDB;
+  }
+
+  undoLastWorkspaceReplace(): boolean {
+    if (!this.rollbackSnapshot) return false;
+    const restored = normalizeDB(this.rollbackSnapshot);
+    this.rollbackSnapshot = null;
+    this.db = restored;
+    this.corruptedDetected = false;
+    this.recordAction('system', 'Undid workspace replacement', `Restored ${this.db.products.length} SKUs and ${this.db.transactions.length} transactions`, 'settings', false);
+    this.save();
+    return true;
+  }
+
+  private writePayload(serialized: string): boolean {
+    this.estimatedBytes = serialized.length;
+    try {
+      const result = this.storage.set(DB_STORAGE_KEY, serialized);
+      if (result === false) {
+        this.quotaExceeded = true;
+        this.lastStorageError = this.storage.lastError?.() || 'Browser storage write failed (quota limit or permission restriction).';
+        return false;
+      }
+      this.quotaExceeded = false;
+      this.lastStorageError = undefined;
+      return true;
+    } catch (err) {
+      this.quotaExceeded = true;
+      this.lastStorageError = err instanceof Error ? err.message : 'Browser storage quota exceeded.';
+      return false;
+    }
   }
 
   private loadOrSeed(): WorkspaceDB {
-    const raw = this.storage.get(DB_STORAGE_KEY);
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw) as Partial<WorkspaceDB>;
-        if (parsed && Array.isArray(parsed.products)) {
-          return normalizeDB(parsed);
+    let raw = this.storage.get(DB_STORAGE_KEY);
+    if (raw === null) {
+      for (const legacyKey of LEGACY_STORAGE_KEYS) {
+        const legacyRaw = this.storage.get(legacyKey);
+        if (legacyRaw !== null) {
+          raw = legacyRaw;
+          break;
         }
-      } catch {
-        // fall through to seed
       }
     }
+
+    if (raw !== null) {
+      try {
+        if (!raw.trim()) {
+          throw new Error('Stored workspace payload is empty.');
+        }
+        const parsed = JSON.parse(raw, (key, val) => {
+          if (key === '__proto__' || key === 'constructor' || key === 'prototype') return undefined;
+          return val;
+        }) as unknown;
+        const migrated = migrateWorkspacePayload(parsed);
+        if (!Array.isArray(migrated.data.products)) {
+          throw new Error('Stored workspace data is missing products[].');
+        }
+        const normalized = normalizeDB(migrated.data);
+        if (migrated.migratedFrom < CURRENT_SCHEMA_VERSION) {
+          this.writePayload(JSON.stringify(normalized));
+        }
+        return normalized;
+      } catch (err) {
+        // NEVER overwrite corrupted user data with sample demo data on startup.
+        // Quarantine raw data for forensic recovery and open a clean non-destructive workspace.
+        this.corruptedDetected = true;
+        this.corruptedRaw = raw;
+        this.lastStorageError = err instanceof Error ? err.message : 'Saved workspace data is corrupted.';
+        try {
+          this.storage.set(CORRUPT_BACKUP_KEY, raw);
+        } catch {
+          // keep corruptedRaw in memory even if storage write fails
+        }
+        return normalizeDB({ version: CURRENT_SCHEMA_VERSION, products: [], transactions: [] });
+      }
+    }
+
     const seeded = createSeedDB();
-    this.storage.set(DB_STORAGE_KEY, JSON.stringify(seeded));
+    this.writePayload(JSON.stringify(seeded));
     return seeded;
   }
 
-  save(): void {
-    this.storage.set(DB_STORAGE_KEY, JSON.stringify(this.db));
+  save(): boolean {
+    const serialized = JSON.stringify(this.db);
+    if (this.writePayload(serialized)) {
+      this.corruptedDetected = false;
+      return true;
+    }
+    // Non-destructive compaction: trim only ephemeral actionLog tail if storage quota was hit;
+    // never discard products, BOMs, transactions, scenarios, or settings.
+    if (Array.isArray(this.db.actionLog) && this.db.actionLog.length > 15) {
+      const compacted: WorkspaceDB = {
+        ...this.db,
+        actionLog: this.db.actionLog.slice(0, 15),
+      };
+      if (this.writePayload(JSON.stringify(compacted))) {
+        this.db = compacted;
+        return true;
+      }
+    }
+    return false;
   }
 
   reset(): void {
+    this.captureRollbackSnapshot();
     const theme = this.db.settings.theme;
     const accent = this.db.settings.accent;
     const reduceMotion = this.db.settings.reduceMotion;
@@ -735,12 +1007,23 @@ export class FactoryStore {
     this.db.settings.theme = theme;
     this.db.settings.accent = accent;
     this.db.settings.reduceMotion = reduceMotion;
+    this.corruptedDetected = false;
+    this.corruptedRaw = null;
+    this.storage.del(CORRUPT_BACKUP_KEY);
     this.recordAction('system', 'Restored demo dataset', 'Reset workspace to 17 seeded SKUs, 5 BOMs, and 34 transactions', 'settings', false);
     this.save();
   }
 
   clearAll(): void {
-    this.db = normalizeDB({ version: 1, products: [], transactions: [], settings: this.db.settings, actionLog: this.db.actionLog });
+    this.captureRollbackSnapshot();
+    this.db = normalizeDB({
+      version: CURRENT_SCHEMA_VERSION,
+      products: [],
+      transactions: [],
+      settings: this.db.settings,
+      actionLog: this.db.actionLog,
+    });
+    this.corruptedDetected = false;
     this.recordAction('system', 'Cleared workspace', 'Removed all SKUs and transactions for clean-slate entry', 'settings', false);
     this.save();
   }
@@ -783,11 +1066,26 @@ export class FactoryStore {
   }
 
   addProduct(data: Partial<Product>): Product {
+    const skuNorm = String(data.sku || '').trim().toUpperCase() || `SKU-${this.db.products.length + 1}`;
+    if (this.db.products.some((existing) => existing.sku.trim().toUpperCase() === skuNorm)) {
+      throw new Error(`Duplicate SKU "${skuNorm}" already exists in the catalogue.`);
+    }
+    const validateNonNeg = (v: unknown, label: string) => {
+      if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v) || v < 0)) {
+        throw new Error(`${label} must be a non-negative finite number.`);
+      }
+    };
+    validateNonNeg(data.unitCost, 'Unit cost');
+    validateNonNeg(data.stock, 'Stock');
+    validateNonNeg(data.annualDemand, 'Annual demand');
+    validateNonNeg(data.orderCost, 'Order cost');
+    validateNonNeg(data.leadTime, 'Lead time');
+
     const annualDemand = Math.max(0, num(data.annualDemand));
     const hasExplicitHistory = Array.isArray(data.demandHistory) && data.demandHistory.length > 0;
     const p: Product = {
       id: uid('p'),
-      sku: String(data.sku || '').trim().toUpperCase() || `SKU-${this.db.products.length + 1}`,
+      sku: skuNorm,
       name: String(data.name || 'Unnamed item').trim(),
       category: String(data.category || 'Other').trim(),
       unit: String(data.unit || 'pcs').trim(),
@@ -812,7 +1110,26 @@ export class FactoryStore {
   updateProduct(id: string, data: Partial<Product>): Product | null {
     const p = this.getProduct(id);
     if (!p) return null;
-    if (data.sku !== undefined) p.sku = String(data.sku).trim().toUpperCase();
+    if (data.sku !== undefined) {
+      const nextSku = String(data.sku).trim().toUpperCase();
+      if (!nextSku) throw new Error('SKU code cannot be empty.');
+      if (this.db.products.some((other) => other.id !== id && other.sku.trim().toUpperCase() === nextSku)) {
+        throw new Error(`Duplicate SKU "${nextSku}" already exists in the catalogue.`);
+      }
+      p.sku = nextSku;
+    }
+    const validateNonNeg = (v: unknown, label: string) => {
+      if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v) || v < 0)) {
+        throw new Error(`${label} must be a non-negative finite number.`);
+      }
+    };
+    validateNonNeg(data.unitCost, 'Unit cost');
+    validateNonNeg(data.stock, 'Stock');
+    validateNonNeg(data.annualDemand, 'Annual demand');
+    validateNonNeg(data.orderCost, 'Order cost');
+    validateNonNeg(data.leadTime, 'Lead time');
+
+    const prevStock = p.stock;
     if (data.name !== undefined) p.name = String(data.name).trim();
     if (data.category !== undefined) p.category = String(data.category).trim();
     if (data.unit !== undefined) p.unit = String(data.unit).trim();
@@ -827,6 +1144,20 @@ export class FactoryStore {
       p.demandHistory = data.demandHistory.map((v) => Math.max(0, num(v)));
     }
     if (data.demandSource !== undefined) p.demandSource = data.demandSource;
+
+    if (data.stock !== undefined && Math.abs(p.stock - prevStock) > 1e-6) {
+      const delta = Math.round((p.stock - prevStock) * 1e6) / 1e6;
+      this.db.transactions.unshift({
+        id: uid('tx'),
+        productId: p.id,
+        type: delta > 0 ? 'in' : 'out',
+        qty: Math.abs(delta),
+        note: 'Manual stock adjustment (SKU edit)',
+        ts: Date.now(),
+      });
+      if (this.db.transactions.length > 2000) this.db.transactions.length = 2000;
+    }
+
     this.recordAction('inventory', `Updated SKU ${p.sku}`, `${p.name} parameters saved`, 'inventory', false);
     this.save();
     return p;
@@ -856,7 +1187,13 @@ export class FactoryStore {
 
   restoreProduct(snap: ProductSnapshot): Product | null {
     if (!snap || !snap.product) return null;
-    if (this.getProduct(snap.product.id)) return null;
+    const skuNorm = snap.product.sku.trim().toUpperCase();
+    if (
+      this.getProduct(snap.product.id) ||
+      this.db.products.some((p) => p.sku.trim().toUpperCase() === skuNorm)
+    ) {
+      return null;
+    }
     this.db.products.push(snap.product);
     (snap.transactions || []).forEach((t) => this.db.transactions.push(t));
     this.db.transactions.sort((a, b) => b.ts - a.ts);
@@ -907,7 +1244,10 @@ export class FactoryStore {
     if (!p) return null;
     let q = Math.abs(num(qty));
     if (!(q > 0)) return null;
-    if (type === 'out' && q > p.stock) q = p.stock;
+    if (type === 'out') {
+      if (!(p.stock > 0)) return null;
+      if (q > p.stock) q = p.stock;
+    }
     p.stock = Math.max(0, Math.round((p.stock + (type === 'in' ? q : -q)) * 1e6) / 1e6);
     const tx: Transaction = {
       id: uid('tx'),
@@ -1214,25 +1554,299 @@ export class FactoryStore {
   }
 
   exportJSON(): string {
-    return JSON.stringify({ ...this.db, exportedAt: new Date().toISOString(), app: 'FactoryMind', version: 1 }, null, 2);
+    return JSON.stringify(
+      {
+        ...this.db,
+        exportedAt: new Date().toISOString(),
+        app: 'FactoryMind',
+        version: CURRENT_SCHEMA_VERSION,
+        schemaVersion: CURRENT_SCHEMA_VERSION,
+      },
+      null,
+      2
+    );
+  }
+
+  validateJSONImport(text: string): {
+    report: JsonValidationReport;
+    migratedData: Partial<WorkspaceDB> | null;
+  } {
+    const errors: ValidationIssue[] = [];
+    const warnings: string[] = [];
+    if (typeof text !== 'string' || !text.trim()) {
+      return {
+        report: {
+          valid: false,
+          migratedFromVersion: 0,
+          schemaVersion: CURRENT_SCHEMA_VERSION,
+          productCount: 0,
+          transactionCount: 0,
+          errors: [{ path: 'file', message: 'JSON file is empty.' }],
+          warnings,
+        },
+        migratedData: null,
+      };
+    }
+    if (text.length > 5_000_000) {
+      return {
+        report: {
+          valid: false,
+          migratedFromVersion: 0,
+          schemaVersion: CURRENT_SCHEMA_VERSION,
+          productCount: 0,
+          transactionCount: 0,
+          errors: [{ path: 'file', message: 'JSON file exceeds 5 MB limit.' }],
+          warnings,
+        },
+        migratedData: null,
+      };
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text, (key, val) => {
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') return undefined;
+        return val;
+      });
+    } catch (err) {
+      return {
+        report: {
+          valid: false,
+          migratedFromVersion: 0,
+          schemaVersion: CURRENT_SCHEMA_VERSION,
+          productCount: 0,
+          transactionCount: 0,
+          errors: [{ path: 'json', message: `Malformed JSON syntax: ${err instanceof Error ? err.message : 'parse error'}` }],
+          warnings,
+        },
+        migratedData: null,
+      };
+    }
+
+    let migrated: { migratedFrom: number; data: Partial<WorkspaceDB>; notes: string[] };
+    try {
+      migrated = migrateWorkspacePayload(parsed);
+      warnings.push(...migrated.notes);
+    } catch (err) {
+      return {
+        report: {
+          valid: false,
+          migratedFromVersion: 0,
+          schemaVersion: CURRENT_SCHEMA_VERSION,
+          productCount: 0,
+          transactionCount: 0,
+          errors: [{ path: 'version', message: err instanceof Error ? err.message : 'Invalid backup payload.' }],
+          warnings,
+        },
+        migratedData: null,
+      };
+    }
+
+    const obj = migrated.data;
+    if (!Array.isArray(obj.products)) {
+      return {
+        report: {
+          valid: false,
+          migratedFromVersion: migrated.migratedFrom,
+          schemaVersion: CURRENT_SCHEMA_VERSION,
+          productCount: 0,
+          transactionCount: 0,
+          errors: [{ path: 'products', message: 'Invalid file: missing products[] array.' }],
+          warnings,
+        },
+        migratedData: null,
+      };
+    }
+
+    const seenSkus = new Map<string, number>();
+    const seenIds = new Map<string, number>();
+    const validProductIds = new Set<string>();
+
+    const checkFiniteRange = (
+      path: string,
+      val: unknown,
+      min: number,
+      max: number,
+      label: string
+    ) => {
+      if (val === undefined) return;
+      if (typeof val !== 'number' || !Number.isFinite(val) || val < min || val > max) {
+        const rangeDesc = max === Infinity ? `>= ${min}` : `between ${min} and ${max}`;
+        errors.push({ path, message: `${label} (${String(val)}) must be a finite number ${rangeDesc}.` });
+      }
+    };
+
+    obj.products.forEach((rawProd, idx) => {
+      const pPrefix = `products[${idx}]`;
+      if (!rawProd || typeof rawProd !== 'object' || Array.isArray(rawProd)) {
+        errors.push({ path: pPrefix, message: `Product #${idx + 1} must be an object.` });
+        return;
+      }
+      const p = rawProd as Partial<Product>;
+      const nameStr = typeof p.name === 'string' ? p.name.trim() : '';
+      if (!nameStr) {
+        errors.push({ path: `${pPrefix}.name`, message: `Product #${idx + 1} is missing a product name.` });
+      }
+
+      const skuStr = typeof p.sku === 'string' ? p.sku.trim().toUpperCase() : '';
+      if (!skuStr) {
+        errors.push({ path: `${pPrefix}.sku`, message: `Product #${idx + 1} ("${nameStr || 'unnamed'}") is missing a SKU.` });
+      } else {
+        if (skuStr.length > 40) {
+          errors.push({ path: `${pPrefix}.sku`, message: `SKU "${skuStr}" exceeds 40 characters.` });
+        }
+        const prevIdx = seenSkus.get(skuStr);
+        if (prevIdx !== undefined) {
+          errors.push({
+            path: `${pPrefix}.sku`,
+            message: `Duplicate SKU "${skuStr}" found at product #${idx + 1} (first defined at #${prevIdx + 1}).`,
+          });
+        } else {
+          seenSkus.set(skuStr, idx);
+        }
+      }
+
+      const idStr = typeof p.id === 'string' && p.id.trim() ? p.id.trim() : '';
+      if (idStr) {
+        const prevIdIdx = seenIds.get(idStr);
+        if (prevIdIdx !== undefined) {
+          errors.push({
+            path: `${pPrefix}.id`,
+            message: `Duplicate internal product ID "${idStr}" at product #${idx + 1}.`,
+          });
+        } else {
+          seenIds.set(idStr, idx);
+          validProductIds.add(idStr);
+        }
+      }
+
+      checkFiniteRange(`${pPrefix}.unitCost`, p.unitCost, 0, Infinity, 'Unit cost');
+      checkFiniteRange(`${pPrefix}.stock`, p.stock, 0, Infinity, 'Stock');
+      checkFiniteRange(`${pPrefix}.annualDemand`, p.annualDemand, 0, Infinity, 'Annual demand');
+      checkFiniteRange(`${pPrefix}.orderCost`, p.orderCost, 0, Infinity, 'Order cost');
+      checkFiniteRange(`${pPrefix}.holdingRate`, p.holdingRate, 0.1, 100, 'Holding rate (%)');
+      checkFiniteRange(`${pPrefix}.leadTime`, p.leadTime, 0, 3650, 'Lead time (days)');
+      checkFiniteRange(`${pPrefix}.serviceLevel`, p.serviceLevel, 50, 99.9, 'Service level (%)');
+
+      if (p.demandHistory !== undefined) {
+        if (!Array.isArray(p.demandHistory)) {
+          errors.push({ path: `${pPrefix}.demandHistory`, message: `SKU "${skuStr || idx + 1}": demandHistory must be an array.` });
+        } else {
+          p.demandHistory.forEach((v, hIdx) => {
+            if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+              errors.push({
+                path: `${pPrefix}.demandHistory[${hIdx}]`,
+                message: `SKU "${skuStr || idx + 1}": demandHistory[${hIdx}] (${String(v)}) must be a non-negative finite number.`,
+              });
+            }
+          });
+        }
+      }
+
+      if (p.bom !== undefined) {
+        if (!Array.isArray(p.bom)) {
+          errors.push({ path: `${pPrefix}.bom`, message: `SKU "${skuStr || idx + 1}": bom must be an array.` });
+        } else {
+          p.bom.forEach((line, bIdx) => {
+            if (!line || typeof line !== 'object') {
+              errors.push({ path: `${pPrefix}.bom[${bIdx}]`, message: `Invalid BOM line in "${skuStr || idx + 1}".` });
+              return;
+            }
+            if (!line.componentId || typeof line.componentId !== 'string') {
+              errors.push({ path: `${pPrefix}.bom[${bIdx}].componentId`, message: `Missing BOM componentId in "${skuStr || idx + 1}".` });
+            } else if (idStr && line.componentId === idStr) {
+              errors.push({ path: `${pPrefix}.bom[${bIdx}]`, message: `SKU "${skuStr}" references itself in its own BOM.` });
+            }
+            if (typeof line.qtyPer !== 'number' || !Number.isFinite(line.qtyPer) || line.qtyPer <= 0) {
+              errors.push({
+                path: `${pPrefix}.bom[${bIdx}].qtyPer`,
+                message: `BOM qtyPer in "${skuStr || idx + 1}" must be a positive number.`,
+              });
+            }
+          });
+        }
+      }
+    });
+
+    if (errors.length === 0 && seenIds.size === obj.products.length) {
+      obj.products.forEach((p, idx) => {
+        (p.bom || []).forEach((line, bIdx) => {
+          if (line.componentId && !validProductIds.has(line.componentId)) {
+            errors.push({
+              path: `products[${idx}].bom[${bIdx}]`,
+              message: `BOM component "${line.componentId}" in "${p.sku}" does not match any product in the backup.`,
+            });
+          }
+        });
+      });
+    }
+
+    if (obj.transactions !== undefined) {
+      if (!Array.isArray(obj.transactions)) {
+        errors.push({ path: 'transactions', message: 'transactions must be an array.' });
+      } else {
+        obj.transactions.forEach((rawTx, idx) => {
+          const tPrefix = `transactions[${idx}]`;
+          if (!rawTx || typeof rawTx !== 'object' || Array.isArray(rawTx)) {
+            errors.push({ path: tPrefix, message: `Transaction #${idx + 1} must be an object.` });
+            return;
+          }
+          const t = rawTx as Partial<Transaction>;
+          if (t.type !== 'in' && t.type !== 'out') {
+            errors.push({ path: `${tPrefix}.type`, message: `Transaction #${idx + 1} has invalid type "${String(t.type)}" (expected "in" or "out").` });
+          }
+          if (typeof t.qty !== 'number' || !Number.isFinite(t.qty) || t.qty <= 0) {
+            errors.push({ path: `${tPrefix}.qty`, message: `Transaction #${idx + 1} qty (${String(t.qty)}) must be a finite number > 0.` });
+          }
+          if (!t.productId || typeof t.productId !== 'string') {
+            errors.push({ path: `${tPrefix}.productId`, message: `Transaction #${idx + 1} is missing productId.` });
+          } else if (seenIds.size === obj.products!.length && !validProductIds.has(t.productId)) {
+            errors.push({
+              path: `${tPrefix}.productId`,
+              message: `Transaction #${idx + 1} references unknown productId "${t.productId}".`,
+            });
+          }
+          if (t.ts !== undefined && (typeof t.ts !== 'number' || !Number.isFinite(t.ts) || t.ts < 0)) {
+            errors.push({ path: `${tPrefix}.ts`, message: `Transaction #${idx + 1} has invalid timestamp.` });
+          }
+        });
+      }
+    }
+
+    return {
+      report: {
+        valid: errors.length === 0,
+        migratedFromVersion: migrated.migratedFrom,
+        schemaVersion: CURRENT_SCHEMA_VERSION,
+        productCount: obj.products.length,
+        transactionCount: Array.isArray(obj.transactions) ? obj.transactions.length : 0,
+        errors,
+        warnings,
+      },
+      migratedData: errors.length === 0 ? obj : null,
+    };
   }
 
   importJSON(text: string): number {
-    if (typeof text !== 'string' || text.length > 5_000_000) {
-      throw new Error('JSON file exceeds 5 MB limit or is invalid.');
+    const { report, migratedData } = this.validateJSONImport(text);
+    if (!report.valid || !migratedData) {
+      const firstErr = report.errors[0]?.message || 'Invalid JSON backup.';
+      const extraCount = report.errors.length - 1;
+      throw new Error(extraCount > 0 ? `${firstErr} (+${extraCount} more validation error${extraCount > 1 ? 's' : ''})` : firstErr);
     }
-    const obj = JSON.parse(text, (key, val) => {
-      if (key === '__proto__' || key === 'constructor' || key === 'prototype') return undefined;
-      return val;
-    }) as Partial<WorkspaceDB>;
-    if (!obj || typeof obj !== 'object' || !Array.isArray(obj.products)) {
-      throw new Error('Invalid file: missing products[]');
-    }
-    obj.products.forEach((p) => {
-      if (!p || typeof p !== 'object' || !p.name) throw new Error('Invalid file: product without a name');
-    });
-    this.db = normalizeDB(obj);
-    this.recordAction('import', 'Imported JSON backup', `Loaded ${this.db.products.length} SKUs into workspace`, 'settings', false);
+    this.captureRollbackSnapshot();
+    const nextDb = normalizeDB(migratedData);
+    this.db = nextDb;
+    this.corruptedDetected = false;
+    this.corruptedRaw = null;
+    this.storage.del(CORRUPT_BACKUP_KEY);
+    this.recordAction(
+      'import',
+      'Imported JSON backup',
+      `Loaded ${this.db.products.length} SKUs and ${this.db.transactions.length} transactions (schema v${CURRENT_SCHEMA_VERSION})`,
+      'settings',
+      false
+    );
     this.save();
     return this.db.products.length;
   }
@@ -1251,6 +1865,7 @@ export class FactoryStore {
         p.orderCost,
         p.holdingRate,
         p.leadTime,
+        p.serviceLevel,
         m.rop.toFixed(0),
         m.safetyStock.toFixed(0),
         m.eoq.Q.toFixed(0),
@@ -1270,6 +1885,7 @@ export class FactoryStore {
         'Order Cost',
         'Holding Rate %',
         'Lead Time (days)',
+        'Service Level',
         'ROP',
         'Safety Stock',
         'EOQ',
@@ -1298,10 +1914,25 @@ export class FactoryStore {
     );
   }
 
-  importProductsCSV(text: string): { created: number; updated: number; skipped: Array<{ line: number; reason: string }> } {
-    const rows = parseCSV(text);
+  private prepareProductsCSV(text: string): {
+    planned: Array<{
+      line: number;
+      mode: 'create' | 'update';
+      targetId?: string;
+      data: Partial<Product>;
+      wantStock?: number;
+      sku: string;
+      name: string;
+    }>;
+    skipped: Array<{ line: number; reason: string }>;
+  } {
+    const rows = parseCSVStrict(text);
     if (!rows.length) throw new Error('The file is empty — nothing to import.');
     const head = rows.shift()!.map((h) => String(h || '').trim().toLowerCase());
+    if (rows.length === 0) {
+      throw new Error('The CSV file contains headers only — add at least one product row.');
+    }
+
     const ALIASES: Record<string, string[]> = {
       sku: ['sku', 'code', 'item code'],
       name: ['name', 'product', 'product name', 'item'],
@@ -1320,27 +1951,91 @@ export class FactoryStore {
       col[f] = ALIASES[f].map((a) => head.indexOf(a)).find((i) => i >= 0) ?? -1;
     });
     if (col.sku < 0 && col.name < 0) {
-      throw new Error('No SKU or Name column found.');
+      throw new Error('Invalid CSV header: no SKU or Name column found.');
     }
+
     const NUMERIC = ['unitCost', 'stock', 'annualDemand', 'orderCost', 'holdingRate', 'leadTime', 'serviceLevel'] as const;
+    const NUMERIC_LABELS: Record<(typeof NUMERIC)[number], string> = {
+      unitCost: 'Unit Cost',
+      stock: 'Stock',
+      annualDemand: 'Annual Demand',
+      orderCost: 'Order Cost',
+      holdingRate: 'Holding Rate %',
+      leadTime: 'Lead Time (days)',
+      serviceLevel: 'Service Level %',
+    };
+    const parseCsvNumber = (raw: string): number | null => {
+      if (!/^[+-]?(?:\d+(?:,\d{3})*|\d+)(?:\.\d+)?$/.test(raw)) return null;
+      const n = Number(raw.replace(/,/g, ''));
+      return Number.isFinite(n) ? n : null;
+    };
+
     const get = (row: string[], f: string) => (col[f] >= 0 ? String(row[col[f]] == null ? '' : row[col[f]]).trim() : '');
-    const out = { created: 0, updated: 0, skipped: [] as Array<{ line: number; reason: string }> };
+    const skipped: Array<{ line: number; reason: string }> = [];
+    const planned: Array<{
+      line: number;
+      mode: 'create' | 'update';
+      targetId?: string;
+      data: Partial<Product>;
+      wantStock?: number;
+      sku: string;
+      name: string;
+    }> = [];
+    const seenCsvSkus = new Map<string, number>();
 
     rows.forEach((row, i) => {
       const line = i + 2;
+      if (row.length > head.length) {
+        skipped.push({
+          line,
+          reason: `row has ${row.length} columns but header has ${head.length} (check unquoted commas)`,
+        });
+        return;
+      }
+
       const sku = get(row, 'sku').toUpperCase();
       const name = get(row, 'name');
       if (!sku && !name) {
-        out.skipped.push({ line, reason: 'no SKU or name' });
+        skipped.push({ line, reason: 'missing both SKU and Name' });
         return;
       }
-      for (const f of NUMERIC) {
-        const raw = get(row, f);
-        if (raw !== '' && Number.isNaN(parseFloat(raw))) {
-          out.skipped.push({ line, reason: `${f} is not a number` });
+      if (sku) {
+        if (sku.length > 32 || /[\r\n\t]/.test(sku)) {
+          skipped.push({ line, reason: `SKU "${sku}" is invalid (max 32 characters, no control chars)` });
           return;
         }
+        const firstLine = seenCsvSkus.get(sku);
+        if (firstLine !== undefined) {
+          skipped.push({ line, reason: `duplicate SKU "${sku}" (already listed on line ${firstLine})` });
+          return;
+        }
+        seenCsvSkus.set(sku, line);
       }
+
+      const parsedNums: Partial<Record<(typeof NUMERIC)[number], number>> = {};
+      for (const f of NUMERIC) {
+        const raw = get(row, f);
+        if (raw === '') continue;
+        const parsed = parseCsvNumber(raw);
+        if (parsed === null || parsed < 0) {
+          skipped.push({ line, reason: `${NUMERIC_LABELS[f]} ("${raw}") must be a valid non-negative number` });
+          return;
+        }
+        if (f === 'holdingRate' && (parsed < 0.1 || parsed > 100)) {
+          skipped.push({ line, reason: `Holding Rate % (${parsed}) must be between 0.1 and 100` });
+          return;
+        }
+        if (f === 'leadTime' && parsed > 3650) {
+          skipped.push({ line, reason: `Lead Time (${parsed} days) must be 3,650 days or less` });
+          return;
+        }
+        if (f === 'serviceLevel' && (parsed < 50 || parsed > 99.9)) {
+          skipped.push({ line, reason: `Service Level % (${parsed}) must be between 50 and 99.9` });
+          return;
+        }
+        parsedNums[f] = parsed;
+      }
+
       const data: Partial<Product> = {};
       if (name) data.name = name;
       if (sku) data.sku = sku;
@@ -1349,42 +2044,106 @@ export class FactoryStore {
       const unit = get(row, 'unit');
       if (unit) data.unit = unit;
       for (const f of NUMERIC) {
-        const v = get(row, f);
-        if (v !== '') data[f] = parseFloat(v);
+        if (parsedNums[f] !== undefined) data[f] = parsedNums[f];
       }
-      if (data.stock !== undefined) data.stock = Math.max(0, data.stock);
 
-      const existing =
-        (sku ? this.db.products.find((p) => p.sku === sku) : undefined) ||
-        (name ? this.db.products.find((p) => p.name.toLowerCase() === name.toLowerCase()) : undefined);
+      // Match by SKU strictly whenever SKU is present; only fall back to Name if CSV SKU cell is empty.
+      const existing = sku
+        ? this.db.products.find((p) => p.sku.trim().toUpperCase() === sku)
+        : this.db.products.find((p) => p.name.toLowerCase() === name.toLowerCase());
+
+      const wantStock = data.stock;
+      delete data.stock;
 
       if (existing) {
-        const wantStock = data.stock;
-        delete data.stock;
-        this.updateProduct(existing.id, data);
-        if (wantStock !== undefined && wantStock !== existing.stock) {
+        planned.push({
+          line,
+          mode: 'update',
+          targetId: existing.id,
+          data,
+          wantStock,
+          sku: sku || existing.sku,
+          name: name || existing.name,
+        });
+      } else {
+        planned.push({
+          line,
+          mode: 'create',
+          data,
+          wantStock,
+          sku: sku || `SKU-${this.db.products.length + planned.length + 1}`,
+          name: name || sku || 'Imported item',
+        });
+      }
+    });
+
+    return { planned, skipped };
+  }
+
+  validateProductsCSV(text: string): {
+    valid: boolean;
+    wouldCreate: number;
+    wouldUpdate: number;
+    skipped: Array<{ line: number; reason: string }>;
+    fatalError?: string;
+  } {
+    try {
+      const { planned, skipped } = this.prepareProductsCSV(text);
+      const wouldCreate = planned.filter((r) => r.mode === 'create').length;
+      const wouldUpdate = planned.filter((r) => r.mode === 'update').length;
+      return {
+        valid: skipped.length === 0 && (wouldCreate + wouldUpdate > 0),
+        wouldCreate,
+        wouldUpdate,
+        skipped,
+      };
+    } catch (err) {
+      return {
+        valid: false,
+        wouldCreate: 0,
+        wouldUpdate: 0,
+        skipped: [],
+        fatalError: err instanceof Error ? err.message : 'Invalid CSV file.',
+      };
+    }
+  }
+
+  importProductsCSV(text: string): CsvImportResult {
+    const { planned, skipped } = this.prepareProductsCSV(text);
+    const out: CsvImportResult = { created: 0, updated: 0, skipped };
+    if (planned.length === 0) {
+      return out;
+    }
+
+    for (const row of planned) {
+      if (row.mode === 'update' && row.targetId) {
+        const existing = this.getProduct(row.targetId);
+        if (!existing) continue;
+        this.updateProduct(existing.id, row.data);
+        if (row.wantStock !== undefined && Math.abs(row.wantStock - existing.stock) > 1e-6) {
           this.addTransaction(
             existing.id,
-            wantStock > existing.stock ? 'in' : 'out',
-            Math.abs(wantStock - existing.stock),
+            row.wantStock > existing.stock ? 'in' : 'out',
+            Math.abs(row.wantStock - existing.stock),
             'CSV import'
           );
         }
         out.updated++;
       } else {
-        const wantStock = data.stock || 0;
-        delete data.stock;
         const created = this.addProduct({
-          ...data,
-          sku,
-          name: name || sku || 'Imported item',
+          ...row.data,
+          sku: row.sku,
+          name: row.name,
           stock: 0,
           demandSource: 'imported',
         });
-        if (wantStock > 0) this.addTransaction(created.id, 'in', wantStock, 'CSV import');
+        if (row.wantStock !== undefined && row.wantStock > 0) {
+          this.addTransaction(created.id, 'in', row.wantStock, 'CSV import');
+        }
         out.created++;
       }
-    });
+    }
+
     this.recordAction(
       'import',
       'Imported product CSV',

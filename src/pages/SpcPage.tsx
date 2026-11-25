@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { LineChart } from '../components/charts/Charts';
-import { Field, Input, Panel, SegmentedControl, StatCard } from '../components/ui/Primitives';
-import { fmtNum } from '../engine/formatters';
+import { ErrorBanner, Field, Input, Panel, SegmentedControl, StatCard } from '../components/ui/Primitives';
+import { clampNumericInput, fmtNum } from '../engine/formatters';
 import { spcAnalysis, spcDrift } from '../engine/ipe';
 
 const PRESETS: Record<string, { label: string; lsl: number; usl: number; rows: string }> = {
@@ -72,19 +72,29 @@ export const SpcPage: React.FC = () => {
     setUsl(PRESETS[key].usl);
   };
 
-  const subgroups = useMemo(
-    () =>
-      rawText
-        .split('\n')
-        .map((line) =>
-          line
-            .split(/[\s,;]+/)
-            .map(Number)
-            .filter(Number.isFinite)
-        )
-        .filter((g) => g.length > 0),
-    [rawText]
-  );
+  const parsedSubgroups = useMemo(() => {
+    const groups: number[][] = [];
+    const rejectedTokens: string[] = [];
+    rawText.split('\n').forEach((line) => {
+      const vals: number[] = [];
+      line
+        .split(/[\s,;]+/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+        .forEach((tok) => {
+          const n = Number(tok);
+          if (Number.isFinite(n)) {
+            vals.push(n);
+          } else {
+            rejectedTokens.push(tok);
+          }
+        });
+      if (vals.length > 0) groups.push(vals);
+    });
+    return { subgroups: groups, rejectedTokens };
+  }, [rawText]);
+
+  const subgroups = parsedSubgroups.subgroups;
 
   const spc = useMemo(() => spcAnalysis({ subgroups, usl, lsl }), [subgroups, usl, lsl]);
   const drift = useMemo(
@@ -122,30 +132,47 @@ export const SpcPage: React.FC = () => {
               />
             </Field>
           </div>
-          <div className="lg:col-span-5 grid grid-cols-2 gap-3 content-start">
+          <div className="lg:col-span-5 grid grid-cols-1 sm:grid-cols-2 gap-3 content-start">
             <Field label="Lower spec limit (LSL)">
-              <Input type="number" step="0.01" value={lsl} onChange={(e) => setLsl(Number(e.target.value))} />
+              <Input type="number" step="0.01" value={lsl} onChange={(e) => setLsl(clampNumericInput(e.target.value, lsl, -1000000, 1000000))} />
             </Field>
-            <Field label="Upper spec limit (USL)">
-              <Input type="number" step="0.01" value={usl} onChange={(e) => setUsl(Number(e.target.value))} />
+            <Field
+              label="Upper spec limit (USL)"
+              error={usl <= lsl ? `Must exceed LSL (${lsl}).` : undefined}
+            >
+              <Input type="number" step="0.01" value={usl} onChange={(e) => setUsl(clampNumericInput(e.target.value, usl, -1000000, 1000000))} />
             </Field>
-            <Field label="EWMA weight λ">
-              <Input type="number" min="0.05" max="0.5" step="0.05" value={lambda} onChange={(e) => setLambda(Number(e.target.value))} />
+            <Field label="EWMA weight λ" termKey="ewma">
+              <Input type="number" min="0.05" max="0.95" step="0.05" value={lambda} onChange={(e) => setLambda(clampNumericInput(e.target.value, lambda, 0.05, 0.95))} />
             </Field>
-            <Field label="CUSUM allowance k">
-              <Input type="number" min="0.1" max="2" step="0.1" value={cusumK} onChange={(e) => setCusumK(Number(e.target.value))} />
+            <Field label="CUSUM allowance k" termKey="cusum">
+              <Input type="number" min="0.1" max="5" step="0.1" value={cusumK} onChange={(e) => setCusumK(clampNumericInput(e.target.value, cusumK, 0.1, 5))} />
             </Field>
             <Field label="CUSUM decision limit h">
-              <Input type="number" min="1" max="10" step="0.5" value={cusumH} onChange={(e) => setCusumH(Number(e.target.value))} />
+              <Input type="number" min="0.5" max="20" step="0.5" value={cusumH} onChange={(e) => setCusumH(clampNumericInput(e.target.value, cusumH, 0.5, 20))} />
             </Field>
           </div>
         </div>
       </Panel>
 
+      {parsedSubgroups.rejectedTokens.length > 0 && (
+        <div
+          role="alert"
+          className="rounded-lg border border-amber-300/70 dark:border-amber-800/70 bg-amber-50/80 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-800 dark:text-amber-300"
+        >
+          Ignored {parsedSubgroups.rejectedTokens.length} non-numeric measurement token(s) ({parsedSubgroups.rejectedTokens.slice(0, 4).join(', ')}).
+        </div>
+      )}
+
+      {usl <= lsl && (
+        <ErrorBanner
+          title="Specification limits invalid (USL ≤ LSL)"
+          message={`Upper specification limit (${usl}) must be strictly greater than lower specification limit (${lsl}) to compute Cp, Cpk, and out-of-spec percentage.`}
+        />
+      )}
+
       {!spc.valid ? (
-        <Panel title="Invalid SPC input">
-          <p className="text-xs text-rose-600">{spc.reason}</p>
-        </Panel>
+        <ErrorBanner title="Invalid SPC input" message={spc.reason || 'Enter at least 2 subgroups with 2–10 measurements per line.'} />
       ) : (
         <>
           {spc.dropped > 0 && (
@@ -157,9 +184,10 @@ export const SpcPage: React.FC = () => {
             </div>
           )}
 
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
             <StatCard
               label="Process capability (Cpk)"
+              termKey="cpk"
               value={spc.cap ? fmtNum(spc.cap.Cpk, 2) : '—'}
               sub={
                 spc.cap
@@ -177,12 +205,14 @@ export const SpcPage: React.FC = () => {
             />
             <StatCard
               label="Western Electric violations"
+              termKey="westernElectric"
               value={String(spc.oocCount)}
               sub={`R1: ${spc.ruleCounts[1]} · R2: ${spc.ruleCounts[2]} · R3: ${spc.ruleCounts[3]}`}
               tone={spc.oocCount > 0 ? 'bad' : 'good'}
             />
             <StatCard
               label="EWMA / CUSUM drift alarm"
+              termKey="ewma"
               value={drift.valid && drift.firstAlarm != null ? `Subgroup S${drift.firstAlarm + 1}` : 'In control'}
               sub={
                 spc.outOfSpecPct != null

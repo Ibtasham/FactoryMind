@@ -11,6 +11,7 @@
     "clean": "rm -rf dist server.js",
     "typecheck": "tsc --noEmit",
     "lint": "npm run typecheck && tsx scripts/static-check.ts",
+    "readme:update": "tsx scripts/update-readme.ts",
     "test:unit": "tsx --test src/engine/engines.test.ts src/engine/factorySim.test.ts src/store/store.test.ts",
     "test:math": "tsx --test src/engine/mathValidation.test.ts src/engine/desEngine.test.ts",
     "test:des": "tsx --test src/engine/desEngine.test.ts",
@@ -18,7 +19,7 @@
     "test:twin": "tsx --test src/engine/digitalTwin.test.ts",
     "test:assistant": "tsx --test src/engine/decisionAssistant.test.ts",
     "test:integration": "tsx --test src/engine/integration.test.ts",
-    "test": "tsx --test src/engine/engines.test.ts src/engine/factorySim.test.ts src/engine/mathValidation.test.ts src/engine/desEngine.test.ts src/engine/scenarioStudio.test.ts src/engine/digitalTwin.test.ts src/engine/decisionAssistant.test.ts src/engine/uxHelpers.test.ts src/engine/integration.test.ts src/engine/auditFixes.test.ts src/store/store.test.ts server.test.ts",
+    "test": "tsx --test src/engine/engines.test.ts src/engine/factorySim.test.ts src/engine/mathValidation.test.ts src/engine/desEngine.test.ts src/engine/scenarioStudio.test.ts src/engine/digitalTwin.test.ts src/engine/decisionAssistant.test.ts src/engine/uxHelpers.test.ts src/engine/integration.test.ts src/engine/auditFixes.test.ts src/engine/functionalVerification.test.ts src/engine/researchBenchmark.test.ts src/store/store.test.ts server.test.ts",
     "verify": "npm run lint && npm test && npm run build"
   },
   "dependencies": {

@@ -34,7 +34,7 @@ import { fmtInt, fmtMoney } from '../../engine/formatters';
 import { Product } from '../../store/store';
 import { useStore } from '../../store/StoreContext';
 import { publicAsset } from '../../utils/assetUrl';
-import { StatusLabel, ToastContainer } from '../ui/Primitives';
+import { RelatedModulesBar, StatusLabel, ToastContainer } from '../ui/Primitives';
 
 export type RouteId =
   | 'home'
@@ -217,7 +217,11 @@ export const AppShell: React.FC<{
           title="Return to FactoryMind Homepage"
           className="flex items-center gap-2.5 min-w-0 text-left hover:opacity-85 transition-opacity cursor-pointer"
         >
-          <img src={publicAsset('assets/aistudio/logo_0620d144.svg')} alt="FactoryMind logo" className="h-7 w-7 rounded shrink-0" />
+          <img
+            src={publicAsset('assets/aistudio/factorymind-mark.png')}
+            alt="FactoryMind logo"
+            className="h-8 w-8 rounded-lg object-cover border border-slate-300/70 dark:border-slate-700/80 shadow-xs shrink-0"
+          />
           <div className="min-w-0">
             <div className="text-sm font-bold tracking-tight text-slate-900 dark:text-white leading-none">
               FactoryMind
@@ -376,6 +380,12 @@ export const AppShell: React.FC<{
     <div className="min-h-screen flex bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
       <a
         href="#main-content"
+        onClick={(e) => {
+          e.preventDefault();
+          const target = document.getElementById('main-content');
+          target?.focus();
+          target?.scrollIntoView({ behavior: 'auto', block: 'start' });
+        }}
         className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[80] focus:px-3 focus:py-2 focus:rounded-md focus:bg-[var(--accent)] focus:text-white focus:text-xs focus:font-semibold"
       >
         Skip to main content
@@ -418,34 +428,39 @@ export const AppShell: React.FC<{
 
       {/* Main Column */}
       <div className="flex-1 min-w-0 flex flex-col">
-        <header className="h-12 sm:h-14 shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/85 backdrop-blur px-3 sm:px-4 lg:px-6 flex items-center justify-between gap-2 sm:gap-3 sticky top-0 z-30 no-print">
-          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+        <header className="h-12 sm:h-14 shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/85 backdrop-blur px-2.5 sm:px-4 lg:px-6 flex items-center justify-between gap-2 sm:gap-3 sticky top-0 z-30 no-print">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               type="button"
               onClick={() => setMobileOpen(true)}
               aria-label="Open navigation"
               aria-expanded={mobileOpen}
-              className="lg:hidden p-1.5 rounded-md border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 cursor-pointer shrink-0"
+              className="lg:hidden p-1.5 min-h-[34px] min-w-[34px] inline-flex items-center justify-center rounded-md border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 cursor-pointer shrink-0"
             >
               <Menu className="h-4 w-4" />
             </button>
             <div className="min-w-0">
-              <h1 className="text-sm font-semibold text-slate-900 dark:text-slate-50 truncate">
-                {currentNav.label}
-              </h1>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="hidden xl:inline text-[11px] font-mono text-slate-500 dark:text-slate-400 shrink-0">
+                  {currentNav.group} /
+                </span>
+                <h1 className="text-sm font-semibold text-slate-900 dark:text-slate-50 truncate">
+                  {currentNav.label}
+                </h1>
+              </div>
               <p className="text-[11px] text-slate-600 dark:text-slate-300 truncate hidden md:block">
                 {currentNav.subtitle}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             <button
               type="button"
               data-testid="cmd-palette-trigger"
               onClick={onOpenCommandPalette}
               aria-label="Search modules, SKUs, scenarios and help"
-              className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-xs text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 min-h-[34px] sm:min-h-0 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-xs text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer"
             >
               <Search className="h-3.5 w-3.5 shrink-0" />
               <span className="hidden sm:inline">Search</span>
@@ -501,7 +516,7 @@ export const AppShell: React.FC<{
                   id="header-alerts-popover"
                   role="region"
                   aria-label="Stock alerts summary"
-                  className="absolute right-0 mt-2 w-72 sm:w-96 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl z-50"
+                  className="fixed sm:absolute right-3 sm:right-0 top-14 sm:top-auto sm:mt-2 w-[calc(100vw-1.5rem)] sm:w-96 max-w-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl z-50"
                 >
                   <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 dark:border-slate-800 text-xs font-semibold">
                     <span>Smart Forecast Alerts ({visibleSmartAlerts.length})</span>
@@ -619,8 +634,8 @@ export const AppShell: React.FC<{
 
         {/* Non-sticky Divided Contextual Sub-Menu Bar + One-for-All Quick Switch */}
         <div className="border-b border-slate-200/80 dark:border-slate-800/80 bg-white/75 dark:bg-slate-900/50 px-3 sm:px-4 lg:px-6 py-2 no-print">
-          <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-2">
-            <nav aria-label="Section sub-navigation" className="flex items-center gap-1.5 overflow-x-auto max-w-full">
+          <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-2">
+            <nav aria-label="Section sub-navigation" className="flex flex-wrap items-center gap-1.5 max-w-full">
               <span className="text-[11px] font-mono uppercase tracking-wider text-slate-600 dark:text-slate-300 mr-1 whitespace-nowrap">
                 {currentNav.group === 'Unified' ? 'Mode:' : `${currentNav.group}:`}
               </span>
@@ -659,10 +674,13 @@ export const AppShell: React.FC<{
           </div>
         </div>
 
-        <main id="main-content" tabIndex={-1} className="flex-1 p-3 sm:p-4 lg:p-6 max-w-[1440px] w-full mx-auto focus:outline-none">
+        <main id="main-content" tabIndex={-1} className="flex-1 p-3 sm:p-4 lg:p-6 max-w-[1600px] w-full mx-auto focus:outline-none">
           {children}
+          {route !== 'one-for-all' && (
+            <RelatedModulesBar routeId={route} onNavigate={(r) => onNavigate(r as RouteId)} />
+          )}
         </main>
-        <footer className="max-w-[1440px] w-full mx-auto px-4 lg:px-6 py-3 border-t border-slate-200/70 dark:border-slate-800/70 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 dark:text-slate-300 no-print">
+        <footer className="max-w-[1600px] w-full mx-auto px-4 lg:px-6 py-3 border-t border-slate-200/70 dark:border-slate-800/70 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 dark:text-slate-300 no-print">
           <span>FactoryMind · Smart Inventory &amp; Production Engineering Workbench</span>
           <span>
             Made by <span className="font-medium text-slate-800 dark:text-slate-100">Md Ibtashamur Rahman</span>

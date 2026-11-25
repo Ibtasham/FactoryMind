@@ -49,7 +49,7 @@ const STATE_STYLES: Record<
   },
 };
 
-export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
+export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = React.memo(({
   config,
   result,
   selectedStationIdx,
@@ -81,7 +81,8 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
     return () => window.clearInterval(timer);
   }, [playing, frames.length, reduceMotion]);
 
-  const activeFrame = frames[frameIdx] || null;
+  const safeFrameIdx = frames.length ? Math.max(0, Math.min(frameIdx, frames.length - 1)) : 0;
+  const activeFrame = frames[safeFrameIdx] || null;
   const routingLabel =
     config.routingMode === 'rework-loop'
       ? `Closed-loop rework → S${config.reworkTargetStationIdx + 1} (max ${config.maxReworkLoops}×)`
@@ -93,13 +94,13 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
     <div className="space-y-4" data-testid="factory-floor-2d">
       {/* Timeline Playback Strip */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 px-3.5 py-2.5">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
           <Button
             size="sm"
             variant={playing ? 'primary' : 'secondary'}
             aria-label={playing ? 'Pause simulation playback' : 'Play simulation timeline'}
             onClick={() => {
-              if (!playing && frameIdx >= frames.length - 1) setFrameIdx(0);
+              if (!playing && safeFrameIdx >= frames.length - 1) setFrameIdx(0);
               setPlaying((v) => !v);
             }}
             disabled={frames.length <= 1}
@@ -125,7 +126,7 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
         </div>
 
         {frames.length > 1 && (
-          <div className="flex-1 min-w-[180px] max-w-md flex items-center gap-2.5">
+          <div className="flex-1 min-w-[160px] max-w-md flex items-center gap-2.5">
             <label htmlFor="floor-timeline-slider" className="sr-only">
               Simulation timeline hour scrubber
             </label>
@@ -134,7 +135,7 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
               type="range"
               min={0}
               max={frames.length - 1}
-              value={frameIdx}
+              value={safeFrameIdx}
               onChange={(e) => {
                 setPlaying(false);
                 setFrameIdx(Number(e.target.value));
@@ -145,7 +146,7 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
         )}
 
         {activeFrame && (
-          <div className="flex flex-wrap items-center gap-3 text-xs font-mono tabular-nums text-slate-600 dark:text-slate-300">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs font-mono tabular-nums text-slate-600 dark:text-slate-300">
             <span>WIP {activeFrame.wip}</span>
             <span aria-hidden="true" className="text-slate-400">·</span>
             <span>Out {fmtInt(activeFrame.completedCumulative)}</span>
@@ -168,11 +169,11 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
       {/* Routing & Physical Layout Grid */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-3.5 items-stretch">
         {/* Warehouse BOM Feed Bay */}
-        <div className="xl:col-span-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/70 p-3 flex flex-col justify-between gap-2.5">
+        <div className="xl:col-span-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/70 p-3 flex flex-col justify-between gap-2.5 min-w-0">
           <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
-            <div>
+            <div className="min-w-0">
               <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">Material Feed Bay</div>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400">
+              <div className="text-[11px] text-slate-600 dark:text-slate-300">
                 {config.enforceMaterialFlow ? `${result.materials.length} BOM SKUs enforced` : 'Unconstrained feed'}
               </div>
             </div>
@@ -180,7 +181,7 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
               <button
                 type="button"
                 onClick={onInspectMaterials}
-                className="text-[11px] font-medium text-[var(--accent)] hover:underline cursor-pointer whitespace-nowrap"
+                className="text-[11px] font-medium text-[var(--accent)] hover:underline cursor-pointer whitespace-nowrap shrink-0"
               >
                 Inspect BOM
               </button>
@@ -200,7 +201,7 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
                         className={
                           mat.stockoutOccurred
                             ? 'text-rose-600 dark:text-rose-400 font-semibold'
-                            : 'text-slate-500 dark:text-slate-400'
+                            : 'text-slate-600 dark:text-slate-300'
                         }
                       >
                         {fmtInt(mat.endingStock)} / {fmtInt(mat.initialStock)}
@@ -224,14 +225,14 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
               )}
             </div>
           ) : (
-            <div className="py-4 text-xs text-slate-500 dark:text-slate-400">
+            <div className="py-4 text-xs text-slate-600 dark:text-slate-300">
               {config.enforceMaterialFlow
                 ? 'Selected assembly has no BOM lines configured.'
                 : 'Material constraints paused — stations pull jobs freely.'}
             </div>
           )}
 
-          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] font-mono tabular-nums text-slate-600 dark:text-slate-300">
             <span>Arrival rate</span>
             <span className="text-slate-800 dark:text-slate-200 font-medium">
               {fmtNum(config.arrivalRatePerHour, 2)} jobs/hr
@@ -240,15 +241,15 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
         </div>
 
         {/* Workstations Flow Grid */}
-        <div className="xl:col-span-7 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/70 p-3.5 flex flex-col justify-between gap-3">
+        <div className="xl:col-span-7 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/70 p-3.5 flex flex-col justify-between gap-3 min-w-0">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
-            <div>
+            <div className="min-w-0">
               <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">
                 Workstation Routing Blueprint
               </div>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400">{routingLabel}</div>
+              <div className="text-[11px] text-slate-600 dark:text-slate-300">{routingLabel}</div>
             </div>
-            <div className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+            <div className="text-[11px] font-mono tabular-nums text-slate-600 dark:text-slate-300">
               Click a station to tune parameters
             </div>
           </div>
@@ -270,7 +271,7 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
                   type="button"
                   onClick={() => onSelectStation(idx)}
                   aria-pressed={selected}
-                  className={`text-left rounded-lg border p-3 transition-colors cursor-pointer ${
+                  className={`text-left rounded-lg border p-3 transition-colors cursor-pointer min-w-0 ${
                     selected
                       ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
                       : st.isBottleneck
@@ -280,7 +281,7 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 flex items-center gap-1 whitespace-nowrap">
+                      <div className="text-[11px] font-mono text-slate-600 dark:text-slate-300 flex flex-wrap items-center gap-1">
                         <span>{st.id}</span>
                         <span aria-hidden="true">·</span>
                         <span>{st.machineCount}×</span>
@@ -302,7 +303,7 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
 
                   {/* Utilization & State */}
                   <div className="mt-2.5 space-y-1.5">
-                    <div className="flex items-center justify-between gap-2 text-[11px] font-mono tabular-nums whitespace-nowrap">
+                    <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] font-mono tabular-nums">
                       <span className={`font-medium ${style.textCls}`}>{style.label}</span>
                       <span className="font-semibold text-slate-800 dark:text-slate-100">
                         {fmtNum(st.utilizationPct, 1)}% util
@@ -317,7 +318,7 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
                   </div>
 
                   {/* Buffer Queue & Cycle Time */}
-                  <div className="mt-2.5 pt-2 border-t border-slate-200/70 dark:border-slate-800/80 flex items-center justify-between gap-2 text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                  <div className="mt-2.5 pt-2 border-t border-slate-200/70 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-1.5 text-[11px] font-mono tabular-nums text-slate-600 dark:text-slate-300">
                     <span>
                       Buf {activeFrame ? fmtInt(frameQueue) : fmtNum(st.avgQueueLen, 1)}/{bufCap} ({fmtInt(qPct)}%)
                     </span>
@@ -329,7 +330,7 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
           </div>
 
           {config.routingMode === 'rework-loop' && (
-            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono tabular-nums text-slate-600 dark:text-slate-300">
               <span>
                 Rework loop active: {fmtNum(config.defectRatePct, 1)}% inspect fail → routes back to{' '}
                 {config.stations[config.reworkTargetStationIdx]?.id || 'S1'}
@@ -342,40 +343,40 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
         </div>
 
         {/* QC & Output Shipping Gate */}
-        <div className="xl:col-span-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/70 p-3 flex flex-col justify-between gap-2.5">
+        <div className="xl:col-span-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/70 p-3 flex flex-col justify-between gap-2.5 min-w-0">
           <div className="border-b border-slate-100 dark:border-slate-800 pb-2">
             <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">QC & Output Gate</div>
-            <div className="text-[11px] text-slate-500 dark:text-slate-400">{result.observedHours}h observed</div>
+            <div className="text-[11px] text-slate-600 dark:text-slate-300">{result.observedHours}h observed</div>
           </div>
 
           <div className="space-y-2.5 text-xs font-mono tabular-nums">
             <div>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400">Good units out</div>
+              <div className="text-[11px] text-slate-600 dark:text-slate-300">Good units out</div>
               <div className="text-lg font-semibold text-emerald-600 dark:text-emerald-400">
                 {fmtInt(result.goodUnitsCompleted)}
               </div>
             </div>
             <div className="flex items-center justify-between text-[11px]">
-              <span className="text-slate-500 dark:text-slate-400">First-pass yield</span>
+              <span className="text-slate-600 dark:text-slate-300">First-pass yield</span>
               <span className="font-medium text-slate-800 dark:text-slate-200">
                 {fmtNum(result.firstPassYieldPct, 1)}%
               </span>
             </div>
             <div className="flex items-center justify-between text-[11px]">
-              <span className="text-slate-500 dark:text-slate-400">Rework loops</span>
+              <span className="text-slate-600 dark:text-slate-300">Rework loops</span>
               <span className="font-medium text-amber-600 dark:text-amber-400">
                 {fmtNum(result.reworkCount, 1)}
               </span>
             </div>
             <div className="flex items-center justify-between text-[11px]">
-              <span className="text-slate-500 dark:text-slate-400">Scrap exits</span>
+              <span className="text-slate-600 dark:text-slate-300">Scrap exits</span>
               <span className="font-medium text-rose-600 dark:text-rose-400">
                 {fmtNum(result.scrapUnits, 1)}
               </span>
             </div>
           </div>
 
-          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] font-mono tabular-nums text-slate-600 dark:text-slate-300">
             Staffing {result.operatorsAvailable}/{result.operatorsRequired} ops (
             {Math.round(result.effectiveStaffingRatio * 100)}%)
           </div>
@@ -383,4 +384,4 @@ export const FactoryFloor2D: React.FC<FactoryFloor2DProps> = ({
       </div>
     </div>
   );
-};
+});

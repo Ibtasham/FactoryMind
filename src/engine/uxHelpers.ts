@@ -655,3 +655,364 @@ export function searchWorkbench(input: {
     .slice(0, 14)
     .map((r) => r.item);
 }
+
+export type EngineeringTermKey =
+  | 'eoq'
+  | 'epq'
+  | 'rop'
+  | 'safetyStock'
+  | 'sigmaFallback'
+  | 'serviceLevel'
+  | 'holdingRate'
+  | 'orderCost'
+  | 'cover'
+  | 'oee'
+  | 'cp'
+  | 'cpk'
+  | 'ppk'
+  | 'westernElectric'
+  | 'ewma'
+  | 'cusum'
+  | 'abcPareto'
+  | 'mrpNet'
+  | 'lowLevelCode'
+  | 'rhoUtilization'
+  | 'crNewsvendor'
+  | 'wape'
+  | 'mase'
+  | 'smape'
+  | 'forecastBias'
+  | 'rollingOrigin'
+  | 'smoothnessIndex'
+  | 'portfolioHealth'
+  | 'parkedCash';
+
+export interface EngineeringTermSpec {
+  key: EngineeringTermKey;
+  term: string;
+  formula?: string;
+  definition: string;
+}
+
+export const ENGINEERING_GLOSSARY: Record<EngineeringTermKey, EngineeringTermSpec> = {
+  eoq: {
+    key: 'eoq',
+    term: 'Economic Order Quantity (EOQ)',
+    formula: 'Q* = sqrt(2DS / H)',
+    definition: 'Order batch size minimizing total annual ordering cost plus holding cost under steady demand D.',
+  },
+  epq: {
+    key: 'epq',
+    term: 'Economic Production Quantity (EPQ)',
+    formula: 'Q* = sqrt(2DS / (H · (1 − D/p)))',
+    definition: 'Optimal internal manufacturing lot size when output replenishes stock gradually at rate p > D.',
+  },
+  rop: {
+    key: 'rop',
+    term: 'Reorder Point (ROP)',
+    formula: 'ROP = d̄·L + Safety Stock',
+    definition: 'Inventory position that triggers a replenishment order so stock covers demand across lead time L.',
+  },
+  safetyStock: {
+    key: 'safetyStock',
+    term: 'Safety Stock (SS)',
+    formula: 'SS = z(SL) · σ_d · sqrt(L)',
+    definition: 'Buffer stock held above expected lead-time demand to achieve target cycle service level SL.',
+  },
+  sigmaFallback: {
+    key: 'sigmaFallback',
+    term: 'Estimated Volatility (~σ)',
+    formula: 'σ_d ≈ 0.30 · d̄',
+    definition: 'Fallback daily demand standard deviation used when an SKU lacks monthly historical demand observations.',
+  },
+  serviceLevel: {
+    key: 'serviceLevel',
+    term: 'Cycle Service Level (SL)',
+    formula: 'P(Lead-time demand ≤ ROP)',
+    definition: 'Target probability of fulfilling all demand during a replenishment cycle without a stockout.',
+  },
+  holdingRate: {
+    key: 'holdingRate',
+    term: 'Annual Holding Rate',
+    formula: 'H = UnitCost × (Holding% / 100)',
+    definition: 'Yearly cost to carry inventory (capital, warehousing, insurance, obsolescence) as a % of unit cost.',
+  },
+  orderCost: {
+    key: 'orderCost',
+    term: 'Fixed Order / Setup Cost (S)',
+    definition: 'Fixed administrative PO cost or line changeover cost incurred each time a replenishment batch starts.',
+  },
+  cover: {
+    key: 'cover',
+    term: 'Months of Cover',
+    formula: 'Cover = OnHand / (AnnualDemand / 12)',
+    definition: 'Months current on-hand inventory will last at average monthly demand before replenishment.',
+  },
+  oee: {
+    key: 'oee',
+    term: 'Overall Equipment Effectiveness (OEE)',
+    formula: 'OEE = Availability × Performance × Quality',
+    definition: 'Standard manufacturing effectiveness score isolating downtime, speed/idle losses, and scrap defects.',
+  },
+  cp: {
+    key: 'cp',
+    term: 'Process Capability Potential (Cp)',
+    formula: 'Cp = (USL − LSL) / (6·σ̂)',
+    definition: 'Ratio of specification tolerance width to natural short-term 6σ process spread (ignores centering).',
+  },
+  cpk: {
+    key: 'cpk',
+    term: 'Centered Capability Index (Cpk)',
+    formula: 'Cpk = min((USL−X̄̄)/(3σ̂), (X̄̄−LSL)/(3σ̂))',
+    definition: 'Minimum distance from process mean to the nearest spec limit in 3σ̂ units; ≥1.33 is industry standard.',
+  },
+  ppk: {
+    key: 'ppk',
+    term: 'Process Performance Index (Ppk)',
+    formula: 'Ppk = min((USL−μ)/(3s), (μ−LSL)/(3s))',
+    definition: 'Long-term capability computed using overall sample standard deviation s across all observations.',
+  },
+  westernElectric: {
+    key: 'westernElectric',
+    term: 'Western Electric Run Rules',
+    definition: 'Statistical rules flagging special-cause variation: points beyond 3σ (R1), 2/3 beyond 2σ (R2), or 4/5 beyond 1σ (R3).',
+  },
+  ewma: {
+    key: 'ewma',
+    term: 'EWMA Control Chart',
+    formula: 'Z_i = λ·x̄_i + (1−λ)·Z_{i−1}',
+    definition: 'Exponentially weighted moving average sensitive to small, sustained mean shifts (0.5σ–1.5σ).',
+  },
+  cusum: {
+    key: 'cusum',
+    term: 'Two-Sided CUSUM Chart',
+    definition: 'Cumulative sum of standardized deviations above/below target; alarms quickly on persistent process drift.',
+  },
+  abcPareto: {
+    key: 'abcPareto',
+    term: 'ABC Pareto Classification',
+    definition: 'Ranks SKUs by annual usage spend (D × UnitCost): Class A drives highest spend and tightest control.',
+  },
+  mrpNet: {
+    key: 'mrpNet',
+    term: 'MRP Net Requirements',
+    formula: 'max(0, GrossReq + SS − OnHand − Receipts)',
+    definition: 'Quantity needed in a planning bucket after applying projected on-hand stock and open scheduled receipts.',
+  },
+  lowLevelCode: {
+    key: 'lowLevelCode',
+    term: 'Low-Level Coding',
+    definition: 'Processes shared sub-components only at their deepest BOM level so gross requirements aggregate cleanly.',
+  },
+  rhoUtilization: {
+    key: 'rhoUtilization',
+    term: 'Traffic Intensity / Utilization (ρ)',
+    formula: 'ρ = λ / (c · μ)',
+    definition: 'Fraction of total server capacity occupied by arriving jobs; steady-state infinite queues require ρ < 1.',
+  },
+  crNewsvendor: {
+    key: 'crNewsvendor',
+    term: 'Critical Ratio (CR)',
+    formula: 'CR = C_u / (C_u + C_o)',
+    definition: 'Optimal service fractile balancing underage lost margin C_u against overage salvage loss C_o.',
+  },
+  wape: {
+    key: 'wape',
+    term: 'Weighted Absolute Percentage Error (WAPE)',
+    formula: 'WAPE = Σ|e_t| / Σ|y_t|',
+    definition: 'Volume-weighted forecast accuracy metric robust against zero-demand periods in intermittent SKUs.',
+  },
+  mase: {
+    key: 'mase',
+    term: 'Mean Absolute Scaled Error (MASE)',
+    formula: 'MASE = MAE_model / MAE_in_sample_naive(train)',
+    definition: 'Scale-free error relative to an in-sample 1-step random walk computed strictly inside the training window (< 1.0 beats naive).',
+  },
+  smape: {
+    key: 'smape',
+    term: 'Symmetric MAPE (sMAPE)',
+    formula: 'sMAPE = (100/N) · Σ [2|y−ŷ| / (|y|+|ŷ|)]',
+    definition: 'Bounded percentage error [0%, 200%] defined whenever at least one of actual or forecast is non-zero.',
+  },
+  forecastBias: {
+    key: 'forecastBias',
+    term: 'Mean Forecast Bias',
+    formula: 'Bias = (1/N) · Σ (y_t − ŷ_t)',
+    definition: 'Signed mean error in series units: positive values indicate under-forecasting (actual > predicted); negative values indicate over-forecasting.',
+  },
+  rollingOrigin: {
+    key: 'rollingOrigin',
+    term: 'Rolling-Origin Cross-Validation',
+    formula: 'Train [s_i .. t_i−1] → Evaluate [t_i .. t_i+h−1]',
+    definition: 'Chronological backtesting that refits models at successive time origins using strictly past data so no future observations leak into training.',
+  },
+  smoothnessIndex: {
+    key: 'smoothnessIndex',
+    term: 'Line Smoothness Index (SI)',
+    formula: 'SI = sqrt(Σ(C_max − T_k)²)',
+    definition: 'Measures workload imbalance across workstations; 0 indicates a perfectly balanced assembly line.',
+  },
+  portfolioHealth: {
+    key: 'portfolioHealth',
+    term: 'Portfolio Health Score',
+    definition: 'Composite 0–100 rating penalized for stockouts, items below ROP, excess cover > target, and unaligned SL.',
+  },
+  parkedCash: {
+    key: 'parkedCash',
+    term: 'Excess Cash Parked',
+    definition: 'Capital tied up in inventory exceeding the active target months-of-cover policy.',
+  },
+};
+
+export function getEngineeringTerm(key: EngineeringTermKey): EngineeringTermSpec {
+  return ENGINEERING_GLOSSARY[key];
+}
+
+export interface RelatedModuleLink {
+  route: string;
+  label: string;
+  reason: string;
+}
+
+export const RELATED_MODULES_BY_ROUTE: Record<string, RelatedModuleLink[]> = {
+  dashboard: [
+    { route: 'inventory', label: 'SKU Catalogue', reason: 'Inspect stock levels & edit SKU parameters' },
+    { route: 'advisor', label: 'Policy Advisor', reason: 'Price excess cash & SL adjustments' },
+    { route: 'factory-sim', label: 'Factory Sim Lab', reason: 'Stress-test shop-floor OEE & WIP' },
+  ],
+  inventory: [
+    { route: 'eoq', label: 'EOQ & ROP', reason: 'Verify batch sizes & safety stock math' },
+    { route: 'abc', label: 'ABC Pareto', reason: 'Prioritize high-spend SKUs' },
+    { route: 'ledger', label: 'Stock Ledger', reason: 'Review 30-day receipt & issue audit trail' },
+  ],
+  advisor: [
+    { route: 'brief', label: 'Executive Brief', reason: 'See saved policy synced to brief' },
+    { route: 'scenario-studio', label: 'Scenario Studio', reason: 'Compare broader demand/LT shocks' },
+    { route: 'inventory', label: 'SKU Catalogue', reason: 'Receive stock or adjust SKU policy' },
+  ],
+  eoq: [
+    { route: 'inventory', label: 'SKU Catalogue', reason: 'Apply parameters to plant SKUs' },
+    { route: 'decision-lab', label: 'Decision Lab', reason: 'Test stochastic lead times via Monte Carlo' },
+    { route: 'advisor', label: 'Policy Advisor', reason: 'Audit SKU service-level impact' },
+  ],
+  abc: [
+    { route: 'inventory', label: 'SKU Catalogue', reason: 'Filter & adjust A/B/C item controls' },
+    { route: 'advisor', label: 'Policy Advisor', reason: 'Align service levels by value tier' },
+    { route: 'reports', label: 'Reports', reason: 'Export Pareto & capital allocation dossier' },
+  ],
+  forecast: [
+    { route: 'dashboard', label: 'Smart Alerts', reason: 'Check predicted stockout dates' },
+    { route: 'eoq', label: 'EOQ & ROP', reason: 'Convert demand rate into order policy' },
+    { route: 'decision-lab', label: 'Decision Lab', reason: 'Simulate uncertain demand distributions' },
+  ],
+  'decision-lab': [
+    { route: 'factory-sim', label: 'Factory Sim Lab', reason: 'Run full multi-station DES line model' },
+    { route: 'eoq', label: 'EOQ & ROP', reason: 'Compare against deterministic (Q,R)' },
+    { route: 'scenario-studio', label: 'Scenario Studio', reason: 'Evaluate cross-module counterfactuals' },
+  ],
+  research: [
+    { route: 'forecast', label: 'Forecasting', reason: 'Inspect rolling-origin curves interactively' },
+    { route: 'line-balance', label: 'Line Balancing', reason: 'Test 5 precedence assignment algorithms' },
+    { route: 'reports', label: 'Reports', reason: 'Generate full engineering methodology report' },
+  ],
+  production: [
+    { route: 'line-balance', label: 'Line Balancing', reason: 'Assign assembly tasks to stations' },
+    { route: 'models-3d', label: '3D Digital Twin', reason: 'Inspect exploded mechanical BOM' },
+    { route: 'factory-sim', label: 'Factory Sim Lab', reason: 'Simulate BOM material consumption' },
+  ],
+  'line-balance': [
+    { route: 'factory-sim', label: 'Factory Sim Lab', reason: 'Feed balanced stations into DES simulation' },
+    { route: 'decision-lab', label: 'Decision Lab', reason: 'Test synced stations with queue variability' },
+    { route: 'spc', label: 'SPC & Quality', reason: 'Monitor process stability & Cpk' },
+  ],
+  spc: [
+    { route: 'factory-sim', label: 'Factory Sim Lab', reason: 'Link scrap rate to OEE quality loss' },
+    { route: 'line-balance', label: 'Line Balancing', reason: 'Review station cycle times' },
+    { route: 'reports', label: 'Reports', reason: 'Include capability findings in reports' },
+  ],
+  'models-3d': [
+    { route: 'production', label: 'Production & MRP', reason: 'Explode BOM into net requirements' },
+    { route: 'factory-sim', label: 'Factory Sim Lab', reason: 'Run DES traces mapped onto 3D floor' },
+    { route: 'scenario-studio', label: 'Scenario Studio', reason: 'Compare Before/After scenario floor' },
+  ],
+  'factory-sim': [
+    { route: 'scenario-studio', label: 'Scenario Studio', reason: 'Compare multi-driver strategic scenarios' },
+    { route: 'models-3d', label: '3D Digital Twin', reason: 'Inspect bottleneck stations in 3D' },
+    { route: 'line-balance', label: 'Line Balancing', reason: 'Rebalance precedence tasks' },
+  ],
+  'scenario-studio': [
+    { route: 'factory-sim', label: 'Factory Sim Lab', reason: 'Inspect detailed DES traces & breakdowns' },
+    { route: 'decision-assistant', label: 'Decision Assistant', reason: 'Ask deterministic Q&A about deltas' },
+    { route: 'brief', label: 'Executive Brief', reason: 'Review board summary after apply' },
+  ],
+  'decision-assistant': [
+    { route: 'scenario-studio', label: 'Scenario Studio', reason: 'Test full 13-lever counterfactuals' },
+    { route: 'advisor', label: 'Policy Advisor', reason: 'Execute priced policy fixes' },
+    { route: 'factory-sim', label: 'Factory Sim Lab', reason: 'Validate bottlenecks in DES' },
+  ],
+  ledger: [
+    { route: 'inventory', label: 'SKU Catalogue', reason: 'Receive or issue stock directly' },
+    { route: 'dashboard', label: 'Dashboard', reason: 'View 30-day stock valuation curve' },
+    { route: 'reports', label: 'Reports', reason: 'Export full audit dataset' },
+  ],
+  brief: [
+    { route: 'advisor', label: 'Policy Advisor', reason: 'Tune policy targets synced to this brief' },
+    { route: 'reports', label: 'Reports', reason: 'Print detailed technical dossier' },
+    { route: 'scenario-studio', label: 'Scenario Studio', reason: 'Verify counterfactual tradeoffs' },
+  ],
+  reports: [
+    { route: 'brief', label: 'Executive Brief', reason: 'View one-page board summary' },
+    { route: 'settings', label: 'Settings & Backups', reason: 'Export full workspace JSON backup' },
+    { route: 'dashboard', label: 'Dashboard', reason: 'Return to live plant overview' },
+  ],
+  settings: [
+    { route: 'inventory', label: 'SKU Catalogue', reason: 'Import CSV or manage individual SKUs' },
+    { route: 'dashboard', label: 'Dashboard', reason: 'Verify workspace metrics after restore' },
+    { route: 'reports', label: 'Reports', reason: 'Export validated operational dossier' },
+  ],
+};
+
+export function getRelatedModules(routeId: string): RelatedModuleLink[] {
+  return RELATED_MODULES_BY_ROUTE[routeId] || [];
+}
+
+export const ROUTE_TO_ONBOARDING_STEP: Record<string, string> = {
+  inventory: 'review-alerts',
+  'factory-sim': 'run-des-sim',
+  'scenario-studio': 'compare-scenarios',
+  'models-3d': 'inspect-3d-twin',
+  'decision-assistant': 'ask-assistant',
+};
+
+export function inferOnboardingStepForRoute(routeId: string): string | null {
+  return ROUTE_TO_ONBOARDING_STEP[routeId] || null;
+}
+
+export function validateNumberRange(
+  raw: string | number,
+  options: { label: string; min?: number; max?: number; strictMin?: boolean; integer?: boolean }
+): { valid: boolean; value: number; error?: string } {
+  const num = typeof raw === 'number' ? raw : raw.trim() === '' ? NaN : Number(raw);
+  if (!Number.isFinite(num)) {
+    return { valid: false, value: NaN, error: `${options.label} must be a valid number.` };
+  }
+  if (options.integer && !Number.isInteger(num)) {
+    return { valid: false, value: num, error: `${options.label} must be a whole number.` };
+  }
+  if (options.min !== undefined) {
+    if (options.strictMin ? num <= options.min : num < options.min) {
+      return {
+        valid: false,
+        value: num,
+        error: options.strictMin
+          ? `${options.label} must be greater than ${options.min}.`
+          : `${options.label} must be at least ${options.min}.`,
+      };
+    }
+  }
+  if (options.max !== undefined && num > options.max) {
+    return { valid: false, value: num, error: `${options.label} cannot exceed ${options.max}.` };
+  }
+  return { valid: true, value: num };
+}
+

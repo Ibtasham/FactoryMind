@@ -146,6 +146,12 @@ export const HomePage: React.FC<HomePageProps> = ({
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-[#080c0a] dark:text-slate-100">
       <a
         href="#home-main"
+        onClick={(e) => {
+          e.preventDefault();
+          const target = document.getElementById('home-main');
+          target?.focus();
+          target?.scrollIntoView({ behavior: 'auto', block: 'start' });
+        }}
         className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[80] focus:px-3 focus:py-2 focus:rounded-md focus:bg-[var(--accent)] focus:text-white focus:text-xs focus:font-semibold"
       >
         Skip to main content
@@ -153,20 +159,20 @@ export const HomePage: React.FC<HomePageProps> = ({
 
       {/* Top Navigation Bar */}
       <header className="sticky top-0 z-40 border-b border-slate-200/80 dark:border-[#18261f] bg-white/95 dark:bg-[#080c0a]/95 backdrop-blur">
-        <div className="max-w-[1320px] mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-3">
+        <div className="max-w-[1320px] mx-auto px-3 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-2 sm:gap-3">
           {/* Brand */}
-          <div className="flex items-center gap-6 min-w-0">
+          <div className="flex items-center gap-4 lg:gap-6 min-w-0">
             <button
               type="button"
               onClick={() => go('home')}
-              className="flex items-center gap-2.5 shrink-0 cursor-pointer focus:outline-none"
+              className="flex items-center gap-2 shrink-0 cursor-pointer focus:outline-none"
             >
               <img
-                src={publicAsset('assets/aistudio/logo_0620d144.svg')}
+                src={publicAsset('assets/aistudio/factorymind-mark.png')}
                 alt="FactoryMind"
-                className="h-7 w-7 rounded-md shrink-0"
+                className="h-8 w-8 rounded-lg object-cover border border-slate-300/70 dark:border-slate-700/80 shadow-xs shrink-0"
               />
-              <span className="text-[15px] font-bold tracking-tight text-slate-950 dark:text-white whitespace-nowrap">
+              <span className="text-[14px] sm:text-[15px] font-bold tracking-tight text-slate-950 dark:text-white whitespace-nowrap">
                 FactoryMind
               </span>
             </button>
@@ -235,13 +241,13 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
 
           {/* Right Utilities */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             <button
               type="button"
               data-testid="home-search-trigger"
               onClick={onOpenCommandPalette}
               aria-label="Search modules, SKUs, scenarios and help"
-              className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-[#1e2e25] bg-slate-50 dark:bg-[#0d1411] text-xs text-slate-600 dark:text-slate-300 hover:border-[var(--accent)]/50 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+              className="inline-flex items-center justify-center gap-2 px-2 sm:px-2.5 py-1.5 min-h-[34px] min-w-[34px] sm:min-h-0 sm:min-w-0 rounded-lg border border-slate-200 dark:border-[#1e2e25] bg-slate-50 dark:bg-[#0d1411] text-xs text-slate-700 dark:text-slate-200 hover:border-[var(--accent)]/50 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
             >
               <Search className="h-3.5 w-3.5 shrink-0" />
               <span className="hidden sm:inline whitespace-nowrap">Search...</span>
@@ -274,7 +280,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 className={`p-1.5 rounded-md transition-colors cursor-pointer ${
                   settings.theme === 'light'
                     ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 <Sun className="h-3.5 w-3.5" />
@@ -287,7 +293,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 className={`p-1.5 rounded-md transition-colors cursor-pointer ${
                   settings.theme === 'dark'
                     ? 'bg-[#172820] text-[var(--accent)] shadow-xs'
-                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 <Moon className="h-3.5 w-3.5" />
@@ -308,7 +314,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
               aria-expanded={mobileMenuOpen}
               onClick={() => setMobileMenuOpen((v) => !v)}
-              className="lg:hidden p-1.5 rounded-lg border border-slate-200 dark:border-[#1e2e25] text-slate-700 dark:text-slate-200 cursor-pointer"
+              className="lg:hidden p-1.5 min-h-[34px] min-w-[34px] flex items-center justify-center rounded-lg border border-slate-200 dark:border-[#1e2e25] text-slate-700 dark:text-slate-200 cursor-pointer"
             >
               {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
             </button>
@@ -648,7 +654,11 @@ export const HomePage: React.FC<HomePageProps> = ({
         <div className="max-w-[1320px] mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-8 pb-10 border-b border-slate-200 dark:border-[#18261f]">
           <div className="lg:col-span-5 space-y-4">
             <div className="flex items-center gap-2.5">
-              <img src={publicAsset('assets/aistudio/logo_0620d144.svg')} alt="FactoryMind" className="h-7 w-7 rounded-md" />
+              <img
+                src={publicAsset('assets/aistudio/factorymind-mark.png')}
+                alt="FactoryMind"
+                className="h-8 w-8 rounded-lg object-cover border border-slate-300/70 dark:border-slate-700/80 shadow-xs shrink-0"
+              />
               <span className="text-base font-bold tracking-tight text-slate-950 dark:text-white">
                 FactoryMind
               </span>

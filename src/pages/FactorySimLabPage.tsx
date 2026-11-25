@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Box,
@@ -16,6 +16,7 @@ import { LazyFactory3DViewport } from '../components/three/LazyFactory3DViewport
 import {
   AssumptionPanel,
   Button,
+  ConfirmDialog,
   EmptyState,
   Field,
   Input,
@@ -31,6 +32,7 @@ import {
   runDesExperimentSuite,
   runDiscreteEventSimulation,
 } from '../engine/desEngine';
+import { classifyMachineVisualStatus, formatRackLocation } from '../engine/digitalTwin';
 import {
   buildDefaultFactoryConfigFromWorkspace,
   estimateSpcQualityProfile,
@@ -81,6 +83,7 @@ export const FactorySimLabPage: React.FC<{
   const [sweepLevers, setSweepLevers] = useState<SensitivityLeverResult[]>([]);
   const [scenarioName, setScenarioName] = useState<string>('');
   const [scenarioNotes, setScenarioNotes] = useState<string>('');
+  const [pendingDeleteScenario, setPendingDeleteScenario] = useState<{ id: string; name: string } | null>(null);
 
   const [desExperiments, setDesExperiments] = useState<DesExperimentPoint[]>([]);
 
@@ -425,7 +428,7 @@ export const FactorySimLabPage: React.FC<{
   // Simulation-driven 3D Twin inputs
   const simPlantProducts = useMemo<PlantRackProductInput[]>(() => {
     const matMap = new Map(result.materials.map((m) => [m.sku.toUpperCase(), m]));
-    return products.map((p) => {
+    return products.map((p, idx) => {
       const m = metricsOf(p);
       const simMat = matMap.get(p.sku.toUpperCase());
       const effectiveStock = simMat ? simMat.endingStock : p.stock;
@@ -446,21 +449,45 @@ export const FactorySimLabPage: React.FC<{
         rop: simMat ? config.materials.find((cm) => cm.sku.toUpperCase() === p.sku.toUpperCase())?.rop ?? m.rop : m.rop,
         unit: p.unit,
         status,
+        rackCode: formatRackLocation(idx).code,
+        starvedInSimulation: Boolean(simMat?.stockoutOccurred),
       };
     });
   }, [products, metricsOf, result.materials, config.materials]);
 
   const simPlantStations = useMemo<PlantStationInput[]>(() => {
-    return result.stations.map((st, idx) => ({
-      stationNumber: idx + 1,
-      utilizationPct: Math.round(st.utilizationPct),
-      taskCount: st.machineCount,
-      tasksLabel: `${st.id} · ${st.machineCount}×M · ${fmtNum(st.effectiveCycleMin, 1)}m`,
-      isBottleneck: st.isBottleneck,
-      avgQueueLen: st.avgQueueLen,
-      throughputPerHour: result.throughputPerHour.mean,
-    }));
-  }, [result.stations, result.throughputPerHour.mean]);
+    return result.stations.map((st, idx) => {
+      const cfgSt = config.stations[idx];
+      const bufCap = Math.max(1, cfgSt?.bufferCapacity ?? 6);
+      const machineState = classifyMachineVisualStatus({
+        queueLen: st.avgQueueLen,
+        bufferCapacity: bufCap,
+        isBottleneck: st.isBottleneck,
+        downPct: st.downPct,
+        pmPct: st.pmPct,
+        blockedPct: st.blockedPct,
+        utilizationPct: st.utilizationPct,
+      });
+      return {
+        stationNumber: idx + 1,
+        stationId: st.id,
+        stationName: st.name,
+        utilizationPct: Math.round(st.utilizationPct),
+        taskCount: st.machineCount,
+        tasksLabel: `${st.id} · ${st.machineCount}×M · ${fmtNum(st.effectiveCycleMin, 1)}m`,
+        isBottleneck: st.isBottleneck,
+        avgQueueLen: st.avgQueueLen,
+        throughputPerHour: result.throughputPerHour.mean,
+        machineState,
+        bufferCapacity: bufCap,
+        downPct: st.downPct,
+        pmPct: st.pmPct,
+        blockedPct: st.blockedPct,
+      };
+    });
+  }, [result.stations, result.throughputPerHour.mean, config.stations]);
+
+  const handleInspectMaterials = useCallback(() => setActiveTab('materials'), []);
 
   const threeSku: AssemblySku = isAssemblySku(config.assemblySku) ? config.assemblySku : 'ASM-CM200';
 
@@ -634,9 +661,9 @@ export const FactorySimLabPage: React.FC<{
             </Field>
           </div>
 
-          <div className="lg:col-span-4 flex flex-wrap xl:flex-nowrap gap-1.5 justify-start lg:justify-end">
+          <div className="lg:col-span-4 flex flex-wrap gap-1.5 justify-start lg:justify-end">
             <Button size="sm" variant="secondary" onClick={handleSyncLineBalance} className="whitespace-nowrap shrink-0">
-              Sync Line Bal
+              Sync Line Balance
             </Button>
             <Button size="sm" variant="secondary" onClick={handleSyncForecastDemand} className="whitespace-nowrap shrink-0">
               Sync Forecast
@@ -762,7 +789,7 @@ export const FactorySimLabPage: React.FC<{
                 result={result}
                 selectedStationIdx={selectedStationIdx}
                 onSelectStation={setSelectedStationIdx}
-                onInspectMaterials={() => setActiveTab('materials')}
+                onInspectMaterials={handleInspectMaterials}
                 reduceMotion={Boolean(settings.reduceMotion)}
               />
             ) : (
@@ -959,6 +986,8 @@ export const FactorySimLabPage: React.FC<{
                     size="sm"
                     variant="ghost"
                     disabled={config.stations.length <= 1}
+                    aria-label={`Remove station ${selectedStation?.id || selectedStationIdx + 1}`}
+                    title={`Remove station ${selectedStation?.id || selectedStationIdx + 1}`}
                     onClick={() => handleRemoveStation(selectedStationIdx)}
                   >
                     <Trash2 className="h-3.5 w-3.5 text-rose-500" />
@@ -1978,18 +2007,80 @@ export const FactorySimLabPage: React.FC<{
             title="Saved Scenarios Matrix"
             subtitle="Click Load to restore any persisted experiment into the Virtual Factory floor"
           >
-            <div className="overflow-x-auto -mx-4 px-4">
+            <div className="md:hidden space-y-2.5">
+              {scenarioComparison.map((row) => (
+                <div
+                  key={row.id}
+                  className={`rounded-lg border p-3 space-y-2 ${
+                    row.isActive
+                      ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
+                      : 'border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/50'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">{row.name}</div>
+                      <div className="font-mono text-[11px] text-slate-600 dark:text-slate-300">
+                        #{row.res.seed} · Bottleneck: {row.res.bottleneckName}
+                      </div>
+                    </div>
+                    {row.isActive && (
+                      <span className="text-[11px] font-semibold text-[var(--accent)] shrink-0">Active</span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-[11px] font-mono tabular-nums pt-1 border-t border-slate-200/70 dark:border-slate-800">
+                    <div>
+                      <span className="block font-sans text-slate-600 dark:text-slate-300">Throughput</span>
+                      <span className="font-semibold">{fmtNum(row.res.throughputPerHour.mean, 2)}/hr</span>
+                    </div>
+                    <div>
+                      <span className="block font-sans text-slate-600 dark:text-slate-300">OEE</span>
+                      <span className="font-semibold">{fmtNum(row.res.oeePct, 1)}%</span>
+                    </div>
+                    <div>
+                      <span className="block font-sans text-slate-600 dark:text-slate-300">$/Good unit</span>
+                      <span>{fmtMoney(row.res.costPerGoodUnit)}</span>
+                    </div>
+                  </div>
+                  {!row.isActive && (
+                    <div className="flex justify-end gap-2 pt-1">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          setFactorySimConfig(row.config);
+                          pushToast({ type: 'info', message: `Loaded scenario "${row.name}".` });
+                        }}
+                      >
+                        Load
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Delete scenario ${row.name}`}
+                        className="text-rose-600 dark:text-rose-400"
+                        onClick={() => setPendingDeleteScenario({ id: row.id, name: row.name })}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="hidden md:block overflow-x-auto -mx-4 px-4">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-800 text-left text-[11px] text-slate-500">
-                    <th className="pb-2 font-medium">Scenario</th>
-                    <th className="pb-2 font-medium">Seed / Hash</th>
-                    <th className="pb-2 font-medium text-right">Throughput</th>
-                    <th className="pb-2 font-medium text-right">Cycle Time</th>
-                    <th className="pb-2 font-medium text-right">OEE</th>
-                    <th className="pb-2 font-medium text-right">$/Good Unit</th>
-                    <th className="pb-2 font-medium">Bottleneck</th>
-                    <th className="pb-2 font-medium text-right">Actions</th>
+                  <tr className="border-b border-slate-200 dark:border-slate-800 text-left text-[11px] text-slate-600 dark:text-slate-300">
+                    <th scope="col" className="pb-2 font-medium">Scenario</th>
+                    <th scope="col" className="pb-2 font-medium">Seed / Hash</th>
+                    <th scope="col" className="pb-2 font-medium text-right">Throughput</th>
+                    <th scope="col" className="pb-2 font-medium text-right">Cycle Time</th>
+                    <th scope="col" className="pb-2 font-medium text-right">OEE</th>
+                    <th scope="col" className="pb-2 font-medium text-right">$/Good Unit</th>
+                    <th scope="col" className="pb-2 font-medium">Bottleneck</th>
+                    <th scope="col" className="pb-2 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80 font-mono tabular-nums">
@@ -1998,7 +2089,7 @@ export const FactorySimLabPage: React.FC<{
                       <td className="py-2.5 pr-3 font-sans font-medium text-slate-900 dark:text-slate-100">
                         {row.name}
                       </td>
-                      <td className="py-2.5 pr-3 text-slate-500">
+                      <td className="py-2.5 pr-3 text-slate-600 dark:text-slate-300">
                         #{row.res.seed} · {row.res.configHash}
                       </td>
                       <td className="py-2.5 pr-3 text-right">{fmtNum(row.res.throughputPerHour.mean, 2)}/hr</td>
@@ -2026,8 +2117,8 @@ export const FactorySimLabPage: React.FC<{
                             <button
                               type="button"
                               aria-label={`Delete scenario ${row.name}`}
-                              onClick={() => deleteFactoryScenario(row.id)}
-                              className="p-1 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded cursor-pointer"
+                              onClick={() => setPendingDeleteScenario({ id: row.id, name: row.name })}
+                              className="p-1.5 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded cursor-pointer"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -2042,6 +2133,25 @@ export const FactorySimLabPage: React.FC<{
           </Panel>
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingDeleteScenario !== null}
+        onClose={() => setPendingDeleteScenario(null)}
+        onConfirm={() => {
+          if (pendingDeleteScenario) {
+            deleteFactoryScenario(pendingDeleteScenario.id);
+            pushToast({ type: 'info', message: `Deleted saved scenario "${pendingDeleteScenario.name}".` });
+          }
+        }}
+        title={pendingDeleteScenario ? `Delete "${pendingDeleteScenario.name}"?` : 'Delete saved scenario?'}
+        message={
+          pendingDeleteScenario
+            ? `Remove "${pendingDeleteScenario.name}" from your saved Factory Simulation scenarios? This cannot be undone.`
+            : ''
+        }
+        confirmLabel="Delete scenario"
+        danger
+      />
 
       <AssumptionPanel topicId="factory-sim" />
     </div>

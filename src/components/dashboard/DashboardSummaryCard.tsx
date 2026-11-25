@@ -36,7 +36,7 @@ export const DashboardSummaryCard: React.FC<{
 
   const deltaTone =
     data.throughput.deltaPct == null
-      ? 'text-slate-500 dark:text-slate-400'
+      ? 'text-slate-600 dark:text-slate-300'
       : data.throughput.deltaPct >= 0
         ? 'text-emerald-600 dark:text-emerald-400'
         : 'text-amber-600 dark:text-amber-400';
@@ -51,12 +51,12 @@ export const DashboardSummaryCard: React.FC<{
           <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
             Operations summary
           </h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+          <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
             Live valuation, replenishment risk, and recent outbound production throughput
           </p>
         </div>
         <div className="flex items-center gap-2.5">
-          <span className="text-[11px] text-slate-500 dark:text-slate-400">Throughput window</span>
+          <span className="text-[11px] text-slate-600 dark:text-slate-300">Throughput window</span>
           <SegmentedControl
             value={windowDays}
             onChange={(v) => setWindowDays(v as '7' | '30')}
@@ -73,7 +73,7 @@ export const DashboardSummaryCard: React.FC<{
         <div className="p-4 flex flex-col justify-between gap-3">
           <div>
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
                 Total Inventory Value
               </span>
               <button
@@ -87,11 +87,11 @@ export const DashboardSummaryCard: React.FC<{
             <div className="mt-1.5 text-2xl font-semibold font-mono tabular-nums text-slate-900 dark:text-slate-50">
               {fmtMoney(data.inventory.totalValue)}
             </div>
-            <div className="mt-1.5 text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+            <div className="mt-1.5 text-xs text-slate-600 dark:text-slate-300 font-mono tabular-nums">
               {fmtInt(data.inventory.skuCount)} SKUs · {fmtInt(data.inventory.assemblyCount)} BOM assemblies
             </div>
           </div>
-          <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+          <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] font-mono tabular-nums text-slate-600 dark:text-slate-300">
             <span>Annual usage {fmtMoney(data.inventory.annualUsageValue)}</span>
             <span className="text-slate-700 dark:text-slate-300 font-medium">
               {data.inventory.turnoverRatio != null ? `${fmtNum(data.inventory.turnoverRatio, 1)}x turns` : '—'}
@@ -103,7 +103,7 @@ export const DashboardSummaryCard: React.FC<{
         <div className="p-4 flex flex-col justify-between gap-3">
           <div>
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
                 Low Stock Alerts
               </span>
               <button
@@ -124,7 +124,7 @@ export const DashboardSummaryCard: React.FC<{
                   : `${data.alerts.outCount} out · ${data.alerts.criticalCount} low · ${data.alerts.reorderCount} reorder`}
               </span>
             </div>
-            <div className="mt-1.5 text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums truncate">
+            <div className="mt-1.5 text-xs text-slate-600 dark:text-slate-300 font-mono tabular-nums truncate">
               {data.alerts.mostUrgent ? (
                 onOpenProduct ? (
                   <button
@@ -142,7 +142,7 @@ export const DashboardSummaryCard: React.FC<{
               )}
             </div>
           </div>
-          <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+          <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] font-mono tabular-nums text-slate-600 dark:text-slate-300">
             <span>Est. replenishment PO</span>
             <span className="text-slate-700 dark:text-slate-300 font-medium">
               {fmtMoney(data.alerts.estimatedPoSpend)}
@@ -154,7 +154,7 @@ export const DashboardSummaryCard: React.FC<{
         <div className="p-4 flex flex-col justify-between gap-3">
           <div>
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
                 Recent Production Throughput ({windowDays}d)
               </span>
               <button
@@ -169,19 +169,19 @@ export const DashboardSummaryCard: React.FC<{
               <span className="text-2xl font-semibold font-mono tabular-nums text-slate-900 dark:text-slate-50">
                 {fmtInt(data.throughput.outboundUnits)}
               </span>
-              <span className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
+              <span className="text-xs font-mono tabular-nums text-slate-600 dark:text-slate-300">
                 units issued ({fmtNum(data.throughput.dailyUnitRate, 1)}/day)
               </span>
             </div>
             <div className="mt-1.5 flex items-center gap-2 text-xs font-mono tabular-nums">
-              <span className="text-slate-500 dark:text-slate-400">
+              <span className="text-slate-600 dark:text-slate-300">
                 {fmtMoney(data.throughput.outboundValue)} value
               </span>
               <span aria-hidden="true" className="text-slate-400">·</span>
               <span className={deltaTone}>{deltaLabel}</span>
             </div>
           </div>
-          <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+          <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] font-mono tabular-nums text-slate-600 dark:text-slate-300">
             <span>{fmtInt(data.throughput.workOrderCount)} work orders · +{fmtInt(data.throughput.inboundUnits)} in</span>
             <span className="text-slate-700 dark:text-slate-300 font-medium">
               {fmtMoney(data.throughput.inboundValue)} recv

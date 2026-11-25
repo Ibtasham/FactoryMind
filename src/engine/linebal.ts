@@ -379,6 +379,7 @@ export function lineBalanceRPW({ tasks, cycleTime, stationCapacity = Infinity }:
   const graph = analyzeGraph(tasks);
   if (!(rawC > 0)) return { ...makeBlankSolution(0, graph, 'cycle time must be greater than 0', 'rpw'), inputsOk: false };
   const C = rawC;
+  if (!graph.tasks.length) return { ...makeBlankSolution(C, graph, 'no tasks defined', 'rpw'), inputsOk: false };
   if (graph.hasCycle) return makeBlankSolution(C, graph, 'precedence cycle detected', 'rpw');
   if (!graph.roots.length) return makeBlankSolution(C, graph, 'no root tasks (all have predecessors)', 'rpw');
   if (graph.missingSuccessors.length) {

@@ -537,6 +537,7 @@ export interface RopResult {
   sigmaFallback: boolean;
   z: number;
   leadTimeDays: number;
+  leadTimeSdDays: number;
   safetyStock: number;
   rop: number;
 }
@@ -546,11 +547,13 @@ export function rop({
   leadTimeDays,
   serviceLevel = 95,
   history = null,
+  leadTimeSdDays = 0,
 }: {
   annualDemand?: number;
   leadTimeDays?: number;
   serviceLevel?: number | null;
   history?: ReadonlyArray<number> | null;
+  leadTimeSdDays?: number;
 } = {}): RopResult {
   const typeErr = inputError(
     { annualDemand, leadTimeDays, serviceLevel },
@@ -562,12 +565,16 @@ export function rop({
   );
   const sl = serviceLevel == null ? 95 : Number(serviceLevel);
   const Lraw = Number(leadTimeDays);
+  const sLraw = leadTimeSdDays == null ? 0 : Number(leadTimeSdDays);
   let reason = typeErr;
   if (!reason && !(Number(annualDemand) >= 0)) reason = 'annual demand must be a number ≥ 0';
   else if (!reason && !(Lraw >= 0)) reason = 'lead time must be a number of days ≥ 0';
+  else if (!reason && (!Number.isFinite(sLraw) || sLraw < 0))
+    reason = 'lead time standard deviation must be a number ≥ 0';
   else if (!reason && !Number.isFinite(zFor(sl)))
     reason = 'service level must be between 0% and 100% (exclusive)';
   const L = Number.isFinite(Lraw) && Lraw > 0 ? Lraw : 0;
+  const sL = Number.isFinite(sLraw) && sLraw > 0 ? sLraw : 0;
   const { dBar, sigmaD, sigmaSource, sigmaFallback } = dailyStats(Number(annualDemand) || 0, history);
   const z = reason ? 0 : zFor(sl);
   if (reason) {
@@ -580,11 +587,13 @@ export function rop({
       sigmaFallback,
       z: 0,
       leadTimeDays: L,
+      leadTimeSdDays: sL,
       safetyStock: 0,
       rop: 0,
     };
   }
-  const safetyStock = z * sigmaD * Math.sqrt(L);
+  const sigmaDLT = Math.sqrt(L * sigmaD * sigmaD + dBar * dBar * sL * sL);
+  const safetyStock = z * sigmaDLT;
   return {
     valid: true,
     reason: '',
@@ -594,6 +603,7 @@ export function rop({
     sigmaFallback,
     z,
     leadTimeDays: L,
+    leadTimeSdDays: sL,
     safetyStock,
     rop: dBar * L + safetyStock,
   };

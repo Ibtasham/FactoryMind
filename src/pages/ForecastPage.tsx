@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { LineChart } from '../components/charts/Charts';
-import { AssumptionPanel, Button, EmptyState, Field, Input, Panel, SegmentedControl, Select, StatCard } from '../components/ui/Primitives';
+import { AssumptionPanel, Button, EmptyState, Field, Input, Panel, SegmentedControl, Select, StatCard, TermTooltip } from '../components/ui/Primitives';
 import {
   crostonMethod,
   emaMethod,
@@ -47,6 +47,24 @@ export const ForecastPage: React.FC = () => {
     }
   }, [products, skuId]);
 
+  const customParse = useMemo(() => {
+    const tokens = customCsv
+      .split(/[\s,;]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    const validNums: number[] = [];
+    const rejected: string[] = [];
+    for (const tok of tokens) {
+      const n = Number(tok);
+      if (Number.isFinite(n) && n >= 0) {
+        validNums.push(n);
+      } else {
+        rejected.push(tok);
+      }
+    }
+    return { validNums, rejected };
+  }, [customCsv]);
+
   const history = useMemo(() => {
     if (sourceMode === 'sku') {
       const p = products.find((x) => x.id === skuId) || products[0];
@@ -55,11 +73,8 @@ export const ForecastPage: React.FC = () => {
     if (sourceMode === 'pattern') {
       return generateDemandDataset(pattern, { n: 36, base: 120, noise: 8, seed: 42 }).history;
     }
-    return customCsv
-      .split(/[\s,;]+/)
-      .map(Number)
-      .filter((n) => Number.isFinite(n) && n >= 0);
-  }, [sourceMode, skuId, products, pattern, customCsv]);
+    return customParse.validNums;
+  }, [sourceMode, skuId, products, pattern, customParse]);
 
   const methodSpecs = useMemo<MethodSpec[]>(() => {
     const p = Math.max(2, Math.min(seasonPeriod, Math.max(2, Math.floor(history.length / 2))));
@@ -157,9 +172,9 @@ export const ForecastPage: React.FC = () => {
           />
         }
       >
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {sourceMode === 'sku' && (
-            <div className="col-span-2">
+            <div className="sm:col-span-2">
               <Field label="Select SKU">
                 <Select value={skuId} onChange={(e) => setSkuId(e.target.value)}>
                   {products.map((p) => (
@@ -173,7 +188,7 @@ export const ForecastPage: React.FC = () => {
           )}
 
           {sourceMode === 'pattern' && (
-            <div className="col-span-2">
+            <div className="sm:col-span-2">
               <Field label="Synthetic demand pattern (n=36)">
                 <Select value={pattern} onChange={(e) => setPattern(e.target.value as typeof pattern)}>
                   <option value="seasonal">Seasonal cycle (sinusoidal)</option>
@@ -187,8 +202,15 @@ export const ForecastPage: React.FC = () => {
           )}
 
           {sourceMode === 'custom' && (
-            <div className="col-span-2">
-              <Field label="Custom comma-separated series">
+            <div className="sm:col-span-2">
+              <Field
+                label="Custom comma-separated series"
+                error={
+                  customParse.validNums.length < 3
+                    ? 'Enter at least 3 non-negative demand observations separated by commas.'
+                    : undefined
+                }
+              >
                 <Input value={customCsv} onChange={(e) => setCustomCsv(e.target.value)} />
               </Field>
             </div>
@@ -218,7 +240,7 @@ export const ForecastPage: React.FC = () => {
           </Field>
         </div>
 
-        <div className="grid grid-cols-3 gap-3 mt-3 max-w-md">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3 max-w-md">
           <Field label="Holt β">
             <Input type="number" min="0.05" max="0.95" step="0.05" value={beta} onChange={(e) => setBeta(clampNumericInput(e.target.value, 0.15, 0.05, 0.95))} />
           </Field>
@@ -229,6 +251,16 @@ export const ForecastPage: React.FC = () => {
             <Input type="number" min="2" max="24" value={seasonPeriod} onChange={(e) => setSeasonPeriod(clampNumericInput(e.target.value, 12, 2, 24, true))} />
           </Field>
         </div>
+
+        {sourceMode === 'custom' && customParse.rejected.length > 0 && (
+          <div
+            role="alert"
+            className="mt-3 rounded-lg border border-amber-300/70 dark:border-amber-800/70 bg-amber-50/80 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-800 dark:text-amber-300"
+          >
+            Ignored {customParse.rejected.length} invalid or negative token(s) ({customParse.rejected.slice(0, 4).join(', ')}
+            {customParse.rejected.length > 4 ? '…' : ''}). Enter non-negative numbers only.
+          </div>
+        )}
       </Panel>
 
       {history.length === 0 ? (
@@ -245,9 +277,10 @@ export const ForecastPage: React.FC = () => {
         <>
 
       {/* Diagnostic KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         <StatCard
           label="Recommended model"
+          termKey="wape"
           value={rec.bestMethod?.name || 'Insufficient data'}
           sub={rec.bestMethod?.metrics.wape != null ? `WAPE ${fmtNum(rec.bestMethod.metrics.wape, 1)}%` : rec.reason}
           tone="good"
@@ -299,18 +332,71 @@ export const ForecastPage: React.FC = () => {
         title="12-model rolling-origin backtest leaderboard"
         subtitle="Ranked by out-of-sample WAPE (Weighted Absolute Percentage Error), tie-broken by RMSE / MAE"
       >
-        <div className="overflow-x-auto -mx-4 px-4">
+        <div className="md:hidden space-y-2">
+          {rankedMethods.map((m, i) => {
+            const isBest = rec.bestMethod?.name === m.name;
+            const key = m.shortKey || m.name;
+            const active = activeSpec?.name === m.name;
+            return (
+              <button
+                key={m.name}
+                type="button"
+                onClick={() => setSelectedMethodKey(key)}
+                className={`w-full text-left rounded-lg border p-3 space-y-1.5 cursor-pointer transition-colors ${
+                  active
+                    ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
+                    : isBest
+                      ? 'border-emerald-300/70 dark:border-emerald-800/70 bg-emerald-50/40 dark:bg-emerald-950/20'
+                      : 'border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/50'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-2 min-w-0">
+                    <span className="font-mono text-[11px] text-slate-600 dark:text-slate-300">#{i + 1}</span>
+                    <span className="h-2 w-2 rounded-[2px] shrink-0" style={{ backgroundColor: m.color }} />
+                    <span className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">{m.name}</span>
+                  </span>
+                  {isBest && (
+                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 shrink-0">
+                      Winner
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-[11px] font-mono tabular-nums pt-1 border-t border-slate-200/70 dark:border-slate-800">
+                  <div>
+                    <span className="block font-sans text-slate-600 dark:text-slate-300">WAPE</span>
+                    <span className="font-semibold text-slate-900 dark:text-slate-100">
+                      {m.metrics.wape != null ? `${fmtNum(m.metrics.wape, 1)}%` : '—'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block font-sans text-slate-600 dark:text-slate-300">RMSE</span>
+                    <span>{m.metrics.rmse != null ? fmtNum(m.metrics.rmse, 2) : '—'}</span>
+                  </div>
+                  <div>
+                    <span className="block font-sans text-slate-600 dark:text-slate-300">MAE</span>
+                    <span>{m.metrics.mae != null ? fmtNum(m.metrics.mae, 2) : '—'}</span>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto -mx-4 px-4">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-slate-200 dark:border-slate-800 text-left text-[11px] text-slate-500">
-                <th className="pb-2 font-medium">Rank</th>
-                <th className="pb-2 font-medium">Method</th>
-                <th className="pb-2 font-medium text-right">WAPE</th>
-                <th className="pb-2 font-medium text-right">RMSE</th>
-                <th className="pb-2 font-medium text-right">MAE</th>
-                <th className="pb-2 font-medium text-right">sMAPE</th>
-                <th className="pb-2 font-medium text-right">Bias</th>
-                <th className="pb-2 font-medium text-right">Points</th>
+              <tr className="border-b border-slate-200 dark:border-slate-800 text-left text-[11px] text-slate-600 dark:text-slate-300">
+                <th scope="col" className="pb-2 font-medium">Rank</th>
+                <th scope="col" className="pb-2 font-medium">Method</th>
+                <th scope="col" className="pb-2 font-medium text-right">
+                  <span className="inline-flex items-center justify-end gap-1">WAPE <TermTooltip termKey="wape" /></span>
+                </th>
+                <th scope="col" className="pb-2 font-medium text-right">RMSE</th>
+                <th scope="col" className="pb-2 font-medium text-right">MAE</th>
+                <th scope="col" className="pb-2 font-medium text-right">sMAPE</th>
+                <th scope="col" className="pb-2 font-medium text-right">Bias</th>
+                <th scope="col" className="pb-2 font-medium text-right">Points</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
@@ -325,11 +411,11 @@ export const ForecastPage: React.FC = () => {
                       isBest ? 'bg-emerald-50/60 dark:bg-emerald-950/30 font-medium' : ''
                     }`}
                   >
-                    <td className="py-2 pr-3 font-mono text-slate-400">{i + 1}</td>
+                    <td className="py-2 pr-3 font-mono text-slate-500 dark:text-slate-400">{i + 1}</td>
                     <td className="py-2 pr-3 flex items-center gap-2">
                       <span className="h-2 w-2 rounded-[2px]" style={{ backgroundColor: m.color }} />
                       <span className="text-slate-900 dark:text-slate-100">{m.name}</span>
-                      {isBest && <span className="text-emerald-600 dark:text-emerald-400 text-[11px]">Winner</span>}
+                      {isBest && <span className="text-emerald-700 dark:text-emerald-400 text-[11px]">Winner</span>}
                     </td>
                     <td className="py-2 pr-3 text-right font-mono tabular-nums">
                       {m.metrics.wape != null ? `${fmtNum(m.metrics.wape, 1)}%` : '—'}
@@ -346,7 +432,7 @@ export const ForecastPage: React.FC = () => {
                     <td className="py-2 pr-3 text-right font-mono tabular-nums">
                       {m.metrics.bias != null ? fmtNum(m.metrics.bias, 2) : '—'}
                     </td>
-                    <td className="py-2 text-right font-mono tabular-nums text-slate-500">{m.metrics.n}</td>
+                    <td className="py-2 text-right font-mono tabular-nums text-slate-600 dark:text-slate-300">{m.metrics.n}</td>
                   </tr>
                 );
               })}

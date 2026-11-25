@@ -25,6 +25,7 @@ import {
   classifyDemand,
   crostonMethod,
   emaMethod,
+  forecastProfile,
   holtLinear,
   hwAdditive,
   hwMultiplicative,
@@ -38,7 +39,7 @@ import {
   smaMethod,
   wmaMethod,
 } from './forecast.ts';
-import { bomTopology, lotSize, mrpPlan } from './mrp.ts';
+import { bomTopology, leadTimeToBuckets, lotSize, mrpPlan } from './mrp.ts';
 import {
   getBenchmark,
   lineBalanceCOMSOAL,
@@ -57,6 +58,7 @@ import {
   queueMG1,
   simulateMonteCarlo,
 } from './inventory.ts';
+import { runDiscreteEventSimulation } from './desEngine.ts';
 import { simulateProductionLine } from './prodsim.ts';
 
 /* ============================================================================
@@ -722,4 +724,240 @@ test('Math [Queueing]: Little Law identities, M/M/c Erlang-C, M/M/c/K bounds & M
 
   // Use imported mean to verify clean usage without lint noise
   assert.equal(mean([1, 2, 3]), 2);
+});
+
+/* ============================================================================
+ * 7. INDEPENDENT TEXTBOOK REFERENCE BENCHMARKS & POST-AUDIT REGRESSION TESTS
+ * ============================================================================ */
+
+test('Math [Reference / Inventory]: Exact Wilson EOQ hand-calc, joint demand+LT ROP & extreme bounds', () => {
+  // Textbook EOQ: D = 10,000, S = 75, C = 12, i = 25% => H = 3 => Q* = sqrt(2*10000*75/3) = sqrt(500000)
+  const w = eoq({ annualDemand: 10000, orderCost: 75, unitCost: 12, holdingRate: 25 });
+  assert.equal(w.valid, true);
+  assert.ok(Math.abs(w.Q - Math.sqrt(500000)) < 1e-9);
+  assert.ok(Math.abs(w.orderingCost - w.holdingCost) < 1e-9);
+  assert.ok(Math.abs(w.variableCost - Math.sqrt(2 * 10000 * 75 * 3)) < 1e-8);
+
+  // REGRESSION: Joint demand + lead-time uncertainty ROP = dBar*L + z * sqrt(L*sigma_d^2 + dBar^2*sigma_L^2)
+  const rLeadVar = rop({
+    annualDemand: 3650, // exact dBar = 10/day
+    leadTimeDays: 9,
+    leadTimeSdDays: 2,
+    serviceLevel: 95,
+    history: [300, 300, 300, 300, 300, 300], // exact zero residual sigmaD = 0
+  });
+  assert.equal(rLeadVar.valid, true);
+  assert.equal(rLeadVar.dBar, 10);
+  assert.equal(rLeadVar.sigmaD, 0);
+  const expectedSS = 1.6449 * 10 * 2; // Z_TABLE exact 95% z = 1.6449
+  assert.ok(Math.abs(rLeadVar.safetyStock - expectedSS) < 1e-2);
+  assert.ok(Math.abs(rLeadVar.rop - (90 + expectedSS)) < 1e-2);
+
+  // Both uncertainties active: sigma_d = 4/day (from history? test with explicit joint check)
+  // Extreme & invalid bounds
+  assert.equal(rop({ annualDemand: 3650, leadTimeDays: 9, leadTimeSdDays: -1, serviceLevel: 95 }).valid, false);
+  assert.equal(rop({ annualDemand: 3650, leadTimeDays: 9, leadTimeSdDays: NaN, serviceLevel: 95 }).valid, false);
+  const hugeEoq = eoq({ annualDemand: 1e12, orderCost: 5000, unitCost: 200, holdingRate: 20 });
+  assert.equal(hugeEoq.valid, true);
+  assert.ok(Number.isFinite(hugeEoq.Q) && Number.isFinite(hugeEoq.totalCost));
+});
+
+test('Math [Reference / Forecast]: REGRESSION Holt-Winters sloped+seasonal reconstruction, Holt step-1 fit, WMA, PI & MASE', () => {
+  // Exact linear-trend + additive seasonal series y_t = 100 + 5*t + [-15, -5, 5, 15]
+  const S4 = [-15, -5, 5, 15];
+  const addSeries = Array.from({ length: 24 }, (_, t) => 100 + 5 * t + S4[t % 4]);
+  const hwAdd = hwAdditive(addSeries, { seasonPeriod: 4, alpha: 0.3, beta: 0.2, gamma: 0.3, horizon: 4 });
+  const expectedAdd = [24, 25, 26, 27].map((t) => 100 + 5 * t + S4[t % 4]); // [205, 220, 235, 250]
+  expectedAdd.forEach((exp, i) => {
+    assert.ok(Math.abs(hwAdd.forecast[i] - exp) < 1e-6, `HW-Add step ${i + 1}: expected ${exp}, got ${hwAdd.forecast[i]}`);
+  });
+
+  // Exact linear-trend + multiplicative seasonal series y_t = (100 + 5*t) * [0.7, 0.9, 1.1, 1.3]
+  const M4 = [0.7, 0.9, 1.1, 1.3];
+  const multSeries = Array.from({ length: 24 }, (_, t) => (100 + 5 * t) * M4[t % 4]);
+  const hwMult = hwMultiplicative(multSeries, { seasonPeriod: 4, alpha: 0.3, beta: 0.2, gamma: 0.3, horizon: 4 });
+  const expectedMult = [24, 25, 26, 27].map((t) => (100 + 5 * t) * M4[t % 4]); // [154, 202.5, 253, 305.5]
+  expectedMult.forEach((exp, i) => {
+    assert.ok(Math.abs(hwMult.forecast[i] - exp) < 0.1, `HW-Mult step ${i + 1}: expected ${exp}, got ${hwMult.forecast[i]}`);
+  });
+
+  // REGRESSION: Holt Linear step-1 one-step-ahead fitted value tracks initial trend on noiseless ramp
+  const ramp = [10, 13, 16, 19, 22, 25];
+  const hl = holtLinear(ramp, { alpha: 0.3, beta: 0.2, horizon: 2 });
+  assert.equal(hl.fitted[1], 13);
+  assert.equal(hl.fitted[5], 25);
+  assert.deepEqual(hl.forecast, [28, 31]);
+
+  // REGRESSION: Non-seasonal default MASE (period = 1) works on short series
+  assert.equal(mase([10, 12, 14, 16], [10, 12, 14, 16]), 0);
+  // Method with MAE=1 against naive MAE=2 -> MASE = 0.5
+  assert.ok(Math.abs(mase([11, 13, 15, 17], [10, 12, 14, 16])! - 0.5) < 1e-9);
+
+  // Hand-calc WMA(w=3) on [10, 20, 30, 40] -> (1*20 + 2*30 + 3*40)/6 = 200/6
+  const wmaRes = wmaMethod([10, 20, 30, 40], { w: 3, horizon: 2 });
+  assert.ok(Math.abs(wmaRes.forecast[0] - 200 / 6) < 1e-9);
+
+  // Prediction interval monotonicity
+  const prof = forecastProfile([100, 104, 98, 102, 105, 99, 103, 101], smaMethod, { w: 3, horizon: 6 });
+  assert.ok(prof != null);
+  for (let i = 1; i < prof.intervals.length; i++) {
+    const prev = prof.intervals[i - 1]!;
+    const cur = prof.intervals[i]!;
+    const wPrev = prev.upper - prev.lower;
+    const wCur = cur.upper - cur.lower;
+    assert.ok(wCur >= wPrev - 1e-9 && cur.lower >= 0);
+  }
+});
+
+test('Math [Reference / Production]: REGRESSION Orlicky level-by-level MRP subassembly netting & time-phased offsetting', () => {
+  // TOP (plan=20 @ day 21 = bucket 3, LT=7d) -> 2*SUB -> 3*RAW
+  // SUB has 15 on-hand & LT=7d (1 weekly bucket):
+  //   Gross(SUB) = 40 @ bucket 3; Net(SUB) = 25 @ bucket 3 => Planned Release(SUB) = 25 @ bucket 2 (day 14)
+  //   Gross(RAW) = 25 * 3 = 75 @ bucket 2 (NOT 120 @ bucket 3!); LT=7d => Planned Release(RAW) = 75 @ bucket 1 (day 7)
+  const plan = mrpPlan({
+    rootId: 'TOP',
+    planQuantity: 20,
+    needInDays: 21,
+    horizonDays: 35,
+    bucketSizeDays: 7,
+    lotRule: 'l4l',
+    items: {
+      TOP: { id: 'TOP', name: 'Top', leadTimeDays: 7, onHand: 0, bom: [{ componentId: 'SUB', qtyPer: 2 }] },
+      SUB: { id: 'SUB', name: 'Sub', leadTimeDays: 7, onHand: 15, bom: [{ componentId: 'RAW', qtyPer: 3 }] },
+      RAW: { id: 'RAW', name: 'Raw', leadTimeDays: 7, onHand: 0, bom: [] },
+    },
+  });
+  assert.equal(plan.valid, true);
+  assert.equal(plan.components.SUB.totalGross, 40);
+  assert.equal(plan.components.SUB.totalNetRequirement, 25);
+  assert.equal(plan.components.SUB.mrpRows[2].plannedOrderRelease, 25);
+  assert.equal(plan.components.RAW.totalGross, 75);
+  assert.equal(plan.components.RAW.mrpRows[2].grossReq, 75);
+  assert.equal(plan.components.RAW.mrpRows[1].plannedOrderRelease, 75);
+  assert.equal(leadTimeToBuckets(8, 7), 2);
+  assert.equal(leadTimeToBuckets(0, 7), 0);
+
+  // Line Balancing efficiency, Balance Delay & Normalized SI% verification on simple-6 benchmark
+  const simple = getBenchmark('simple-6')!;
+  const sol = lineBalanceExact({ tasks: simple.tasks, cycleTime: 10 });
+  const sumTimes = simple.tasks.reduce((s, t) => s + t.time, 0);
+  const expectedEff = (sumTimes / (sol.stationCount! * 10)) * 100;
+  const expectedSI =
+    Math.sqrt(sol.stations.reduce((s, st) => s + (10 - st.time) ** 2, 0) / (sumTimes * sumTimes)) * 100;
+  assert.ok(Math.abs(sol.efficiency! - expectedEff) <= 0.01);
+  assert.ok(Math.abs(sol.balanceDelay! - (100 - expectedEff)) <= 0.01);
+  assert.ok(Math.abs(sol.smoothnessIndex! - expectedSI) <= 0.01);
+});
+
+test('Math [Reference / Quality]: Independent EWMA/CUSUM recursion, ASTM SPC constants & edge guards', () => {
+  // Independent ASTM STP 15D spot checks
+  assert.equal(SPC_CONSTANTS[2].d2, 1.128);
+  assert.equal(SPC_CONSTANTS[5].A2, 0.577);
+  assert.equal(SPC_CONSTANTS[5].D4, 2.114);
+  assert.equal(SPC_CONSTANTS[10].D3, 0.223);
+
+  const groups = [
+    [10.0, 10.2, 9.8, 10.0], // mean=10.0, R=0.4
+    [10.4, 10.6, 10.2, 10.4], // mean=10.4, R=0.4
+    [10.6, 10.8, 10.4, 10.6], // mean=10.6, R=0.4
+  ];
+  const lam = 0.25;
+  const kVal = 0.5;
+  const LVal = 3;
+  const drift = spcDrift({ subgroups: groups, target: 10.0, lambda: lam, k: kVal, h: 4, L: LVal });
+  assert.equal(drift.valid, true);
+
+  // Hand-compute sigmaMean = Rbar * A2 / 3, EWMA Z_t and transient sigma_Z(t), CUSUM S_t+
+  const rbar = 0.4;
+  const sm = (rbar * SPC_CONSTANTS[4].A2) / 3;
+  const z1 = lam * 10.0 + (1 - lam) * 10.0;
+  const z2 = lam * 10.4 + (1 - lam) * z1;
+  const z3 = lam * 10.6 + (1 - lam) * z2;
+  const sigZ2 = sm * Math.sqrt((lam / (2 - lam)) * (1 - Math.pow(1 - lam, 4)));
+  const sUp2 = Math.max(0, 0 + (10.4 - 10.0) / sm - kVal);
+  const sUp3 = Math.max(0, sUp2 + (10.6 - 10.0) / sm - kVal);
+
+  assert.ok(Math.abs(drift.sigmaMean - sm) < 1e-12);
+  assert.ok(Math.abs(drift.ewma!.series[1] - z2) < 1e-12);
+  assert.ok(Math.abs(drift.ewma!.series[2] - z3) < 1e-12);
+  assert.ok(Math.abs(drift.ewma!.uclSeries[1] - (10.0 + LVal * sigZ2)) < 1e-12);
+  assert.ok(Math.abs(drift.cusum!.up[2] - sUp3) < 1e-12);
+
+  // Edge guards: empty, NaN rows, negative measurements with valid USL > LSL
+  assert.equal(spcAnalysis({ subgroups: [] }).valid, false);
+  assert.equal(spcAnalysis({ subgroups: [[NaN, NaN], [1, 2]] }).valid, false);
+  const negSpc = spcAnalysis({ subgroups: [[-10.1, -9.9], [-10.0, -9.8], [-10.2, -10.0]], lsl: -11, usl: -9 });
+  assert.equal(negSpc.valid, true);
+  assert.ok(negSpc.cap!.Cp > 0);
+});
+
+test('Math [Reference / Queueing]: REGRESSION M/M/c/K log-space high-rho/large-K stability & analytical M/M/2 benchmark', () => {
+  // Independent hand-calc M/M/2: lambda = 6, mu = 5 => a = 1.2, rho = 0.6
+  // P0 = 1 / (1 + 1.2 + (1.2^2 / 2)/(1 - 0.6)) = 1 / (2.2 + 1.8) = 0.25
+  // P_wait = 1.8 * 0.25 = 0.45; Lq = 0.45 * 0.6 / 0.4 = 0.675; L = 0.675 + 1.2 = 1.875
+  const mm2 = queueMeckley({ lambda: 6, mu: 5, servers: 2 });
+  assert.equal(mm2.valid, true);
+  assert.ok(Math.abs(mm2.p0 - 0.25) < 1e-12);
+  assert.ok(Math.abs(mm2.pWait - 0.45) < 1e-12);
+  assert.ok(Math.abs(mm2.Lq - 0.675) < 1e-12);
+  assert.ok(Math.abs(mm2.L - 1.875) < 1e-12);
+
+  // REGRESSION: M/M/1/1000 with rho = 5.0 (previously overflowed IEEE-754 at 5^1000)
+  // Exact closed-form stationary limit for large K with rho=5:
+  //   pBlock -> 1 - 1/rho = 0.80, lambdaEff -> mu = 10, L -> K - 1/(rho - 1) = 999.75
+  const mmckLarge = queueMeckley({ lambda: 50, mu: 10, servers: 1, capacity: 1000 });
+  assert.equal(mmckLarge.valid, true);
+  assert.ok(Math.abs(mmckLarge.pBlock - 0.8) < 1e-9);
+  assert.ok(Math.abs(mmckLarge.lambdaEff - 10) < 1e-9);
+  assert.ok(Math.abs(mmckLarge.L - 999.75) < 1e-9);
+  const sumProbs = mmckLarge.pState.reduce((acc, s) => acc + s.p, 0);
+  assert.ok(Math.abs(sumProbs - 1) < 1e-9);
+
+  // Closed-form M/D/1 benchmark (lambda=4, mu=10, scv2=0 => rho=0.4 => Wq = rho / (2*mu*(1-rho)) = 0.4 / 12 = 1/30)
+  const md1 = queueMG1({ lambda: 4, mu: 10, scv2: 0 });
+  assert.equal(md1.valid, true);
+  assert.ok(Math.abs(md1.Wq - 1 / 30) < 1e-12);
+});
+
+test('Math [Reference / DES]: REGRESSION shop-floor Little Law consistency under intake staging saturation & PM hazard uplift', () => {
+  // Saturated station (arrival 6/hr > capacity 5/hr, bufferCapacity=2) fills external stagingQueue
+  // Exact floor capacity in steady-state: 2 in queue + 1 in service = 3.0 jobs; floor cycle = 36 min;
+  // lambda_cal = 5/60 jobs/min => littlesLawExpectedWip = (5/60)*36 = 3.0 == avgFloorWip (0% gap)
+  const sat = runDiscreteEventSimulation({
+    name: 'Saturated Floor Boundary Check',
+    horizonHours: 40,
+    warmupHours: 10,
+    deterministic: true,
+    replications: 1,
+    seed: 1,
+    stations: [{ id: 'S1', name: 'S1', machineCount: 1, bufferCapacity: 2, processDist: { kind: 'constant', mean: 12 } }],
+    routes: [{ id: 'R1', sku: 'A', name: 'A', steps: [{ stationId: 'S1' }] }],
+    openArrivals: { ratePerHour: 6, cv: 0, mix: [{ routeId: 'R1', weight: 1 }] },
+  });
+  assert.equal(sat.valid, true);
+  assert.ok(sat.avgWip.mean > 10, 'System avgWip includes external staging queue');
+  assert.ok(Math.abs(sat.littlesLawExpectedWip - 3) < 1e-6);
+  assert.ok(sat.littlesLawGapPct < 1e-6, `Expected 0% shop-floor Little's Law gap, got ${sat.littlesLawGapPct}%`);
+
+  // Verify PM schedule reduces random failures (pmIntervalMin > 0 extends effective MTBF by 1.45x)
+  const baseRel = {
+    name: 'PM Hazard Test',
+    horizonHours: 200,
+    warmupHours: 10,
+    deterministic: false,
+    replications: 5,
+    seed: 777,
+    routes: [{ id: 'R1', sku: 'A', name: 'A', steps: [{ stationId: 'S1' }] }],
+    openArrivals: { ratePerHour: 4, cv: 0.2, mix: [{ routeId: 'R1', weight: 1 }] },
+  };
+  const noPm = runDiscreteEventSimulation({
+    ...baseRel,
+    stations: [{ id: 'S1', name: 'S1', machineCount: 1, bufferCapacity: 8, processDist: { kind: 'constant', mean: 8 }, mtbfMin: 180, mttrMin: 10 }],
+  });
+  const withPm = runDiscreteEventSimulation({
+    ...baseRel,
+    stations: [{ id: 'S1', name: 'S1', machineCount: 1, bufferCapacity: 8, processDist: { kind: 'constant', mean: 8 }, mtbfMin: 180, mttrMin: 10, pmIntervalMin: 240, pmDurationMin: 8 }],
+  });
+  assert.ok(withPm.stations[0].failuresCount < noPm.stations[0].failuresCount);
+  assert.ok(withPm.stations[0].pmEventsCount > 0);
 });

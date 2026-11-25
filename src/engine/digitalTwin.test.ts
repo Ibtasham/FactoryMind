@@ -15,6 +15,8 @@ import {
   evaluateScenario,
   ScenarioWorkspaceInput,
 } from './scenarioStudio.ts';
+import { buildAssembly3D, buildPlantFloorTwin, updatePlantFloorTwin } from './threeModels.ts';
+import { ASSEMBLY_3D_SPECS, ASSEMBLY_SKU_LIST } from './threeSpecs.ts';
 import { FactoryStore, StorageBackend } from '../store/store.ts';
 
 function memoryStorage(): StorageBackend {
@@ -225,3 +227,111 @@ test('Playback timeline cursor reflects exact DES frame and scenario comparison 
   assert.ok(Number.isFinite(comparison.deltas.oeeDeltaPts));
   assert.ok(comparison.whatChanged.length > 0);
 });
+
+test('All 5 assembly projects build project-matched workshop machine bays without polluting selectable BOM parts', () => {
+  const meshCountByProject = new Map<string, number>();
+
+  for (const sku of ASSEMBLY_SKU_LIST) {
+    const built = buildAssembly3D(sku, 'steel');
+    const spec = ASSEMBLY_3D_SPECS[sku];
+
+    assert.equal(
+      built.parts.length,
+      spec.parts.length,
+      `${sku}: selectable parts[] should match BOM spec length without background props`
+    );
+    assert.ok(
+      built.root.children.length >= 2,
+      `${sku}: outer root must contain both workshop environment and grounded hero assembly`
+    );
+
+    let totalMeshes = 0;
+    built.root.traverse((obj) => {
+      if ((obj as { isMesh?: boolean }).isMesh) totalMeshes += 1;
+    });
+    let partMeshes = 0;
+    built.parts.forEach((p) => {
+      p.traverse((obj) => {
+        if ((obj as { isMesh?: boolean }).isMesh) partMeshes += 1;
+      });
+    });
+
+    assert.ok(
+      totalMeshes - partMeshes >= 15,
+      `${sku}: workshop environment should render rich machine/bay geometry (got ${totalMeshes - partMeshes})`
+    );
+    meshCountByProject.set(sku, totalMeshes - partMeshes);
+
+    // Every BOM part retains valid basePos & explodeOffset for explode slider
+    built.parts.forEach((p) => {
+      assert.ok(Array.isArray(p.userData.basePos) && p.userData.basePos.length === 3);
+      assert.ok(Array.isArray(p.userData.explodeOffset) && p.userData.explodeOffset.length === 3);
+      assert.ok(typeof p.userData.partId === 'string' && p.userData.partId.length > 0);
+    });
+
+    built.dispose();
+  }
+
+  // Different projects must yield distinct workshop layouts/machine mesh counts
+  const uniqueEnvMeshCounts = new Set(meshCountByProject.values());
+  assert.ok(uniqueEnvMeshCounts.size >= 3, 'Different assembly projects should generate distinct background machinery');
+});
+
+test('Plant Digital Twin adds perimeter hall & overhead bridge crane outside selectable parts[] and preserves in-place telemetry updates', () => {
+  const { ws, metricsMap } = buildWorkspace();
+  const baseDef = buildBaselineScenarioFromWorkspace(ws);
+  const evalRes = evaluateScenario(baseDef, ws);
+  const snap = buildDigitalTwinSnapshot({
+    products: ws.products,
+    metricsMap,
+    evaluation: evalRes,
+    assemblySku: 'ASM-CM200',
+    origin: 'baseline',
+  });
+
+  const productsInput = snap.rackBins.map((b) => ({
+    id: b.productId,
+    sku: b.sku,
+    name: b.name,
+    category: b.category,
+    stock: b.stock,
+    rop: b.rop,
+    unit: b.unit,
+    status: b.stockStatus,
+    rackCode: b.location.code,
+    usedInAssemblies: b.usedInAssemblies,
+    starvedInSimulation: b.starvedInSimulation,
+  }));
+  const stationsInput = snap.stations.map((s) => ({
+    stationNumber: s.stationNumber,
+    utilizationPct: s.utilizationPct,
+    taskCount: s.machineCount,
+    tasksLabel: s.tasksLabel,
+    isBottleneck: s.isBottleneck,
+    avgQueueLen: s.avgQueueLen,
+    throughputPerHour: s.throughputPerHour,
+    stationId: s.id,
+    stationName: s.name,
+    machineState: s.machineState,
+    bufferCapacity: s.bufferCapacity,
+  }));
+
+  const plant = buildPlantFloorTwin(productsInput, stationsInput, 'cobalt', { assemblySku: 'ASM-CM200' });
+  const expectedSelectable = Math.min(18, productsInput.length) + Math.min(6, stationsInput.length);
+  assert.equal(plant.parts.length, expectedSelectable, 'Background crane & perimeter machines must stay outside parts[]');
+
+  let totalMeshes = 0;
+  plant.root.traverse((obj) => {
+    if ((obj as { isMesh?: boolean }).isMesh) totalMeshes += 1;
+  });
+  assert.ok(totalMeshes >= expectedSelectable + 35, 'Plant Twin should render outer hall, bridge crane & auxiliary machines');
+
+  // Verify incremental update still succeeds cleanly
+  const mutatedStations = stationsInput.map((s, idx) =>
+    idx === 0 ? { ...s, utilizationPct: 91, machineState: 'bottleneck' as const } : s
+  );
+  assert.equal(updatePlantFloorTwin(plant, productsInput, mutatedStations, { assemblySku: 'ASM-CM200' }), true);
+
+  plant.dispose();
+});
+

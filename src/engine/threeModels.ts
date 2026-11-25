@@ -112,7 +112,7 @@ export function computePlantTopologyKey(
     .slice(0, 18)
     .map((p) => String(p.sku || '').toUpperCase())
     .join(',');
-  const stCount = stations.length ? Math.min(6, stations.length) : 3;
+  const stCount = Math.min(6, stations.length);
   return `${stCount}::${skuKey}`;
 }
 
@@ -171,6 +171,7 @@ function createBrushedMetalTexture(): THREE.Texture {
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(3, 3);
+  tex.anisotropy = 4;
   return tex;
 }
 
@@ -197,6 +198,7 @@ function createRibbedBeltTexture(): THREE.Texture {
   tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(5, 1);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
   return tex;
 }
 
@@ -232,6 +234,7 @@ function createFloorGridTexture(): THREE.Texture {
   tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(8, 6);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
   return tex;
 }
 
@@ -243,6 +246,7 @@ class SceneResourceBag {
   geometries: THREE.BufferGeometry[] = [];
   materials: THREE.Material[] = [];
   textures: THREE.Texture[] = [];
+  instancedMeshes: THREE.InstancedMesh[] = [];
 
   trackGeo<T extends THREE.BufferGeometry>(g: T): T {
     this.geometries.push(g);
@@ -259,10 +263,17 @@ class SceneResourceBag {
     return t;
   }
 
+  trackInstanced<T extends THREE.InstancedMesh>(m: T): T {
+    this.instancedMeshes.push(m);
+    return m;
+  }
+
   dispose() {
+    this.instancedMeshes.forEach((m) => m.dispose());
     this.geometries.forEach((g) => g.dispose());
     this.materials.forEach((m) => m.dispose());
     this.textures.forEach((t) => t.dispose());
+    this.instancedMeshes = [];
     this.geometries = [];
     this.materials = [];
     this.textures = [];
@@ -1167,7 +1178,8 @@ function buildMaintenanceKit(bag: SceneResourceBag, finishId: FinishPresetId): B
 export function buildPlantFloorTwin(
   products: PlantRackProductInput[],
   stations: PlantStationInput[],
-  finishId: FinishPresetId
+  finishId: FinishPresetId,
+  options?: { assemblySku?: AssemblySku | string }
 ): BuiltSceneRoot {
   const bag = new SceneResourceBag();
   const root = new THREE.Group();
@@ -1177,6 +1189,7 @@ export function buildPlantFloorTwin(
   const animatedHeads: NonNullable<BuiltSceneRoot['animatedHeads']> = [];
   const floorAnchors = new Map<string, [number, number, number]>();
   const p = makeMaterialPalette(bag, finishId);
+  const activeWorkpieceSku = options?.assemblySku || 'WORKPIECE';
 
   const floorTex = bag.trackTex(createFloorGridTexture());
   const floorMat = bag.trackMat(
@@ -1205,7 +1218,7 @@ export function buildPlantFloorTwin(
   // Instanced floor aisle studs for spatial rhythm (1 draw call)
   const studGeo = bag.trackGeo(new THREE.CylinderGeometry(0.035, 0.04, 0.015, 8));
   const studCount = 24;
-  const studInst = new THREE.InstancedMesh(studGeo, p.brass, studCount);
+  const studInst = bag.trackInstanced(new THREE.InstancedMesh(studGeo, p.brass, studCount));
   const studDummy = new THREE.Object3D();
   for (let i = 0; i < studCount; i++) {
     const row = Math.floor(i / 12);
@@ -1217,6 +1230,9 @@ export function buildPlantFloorTwin(
   studInst.instanceMatrix.needsUpdate = true;
   studInst.computeBoundingSphere();
   root.add(studInst);
+
+  // Outer industrial plant hall apron, gantry crane & auxiliary perimeter cells
+  addPlantBackgroundMachinery(bag, p, root);
 
   // -------------------------------------------------------------------------
   // Zone A: Automated Multi-Station Conveyor Line (Front Bay z = +1.55)
@@ -1240,34 +1256,41 @@ export function buildPlantFloorTwin(
     root.add(leg);
   });
 
-  const activeStations: PlantStationInput[] = stations.length
-    ? stations.slice(0, 6)
-    : [
-        { stationNumber: 1, stationId: 'S1', stationName: 'Subassembly', utilizationPct: 86, taskCount: 4, tasksLabel: 'Subassembly mount', machineState: 'processing', bufferCapacity: 6 },
-        { stationNumber: 2, stationId: 'S2', stationName: 'Drive & Tension', utilizationPct: 96, taskCount: 5, tasksLabel: 'Drive & belt tension', isBottleneck: true, machineState: 'bottleneck', bufferCapacity: 6, avgQueueLen: 3.8 },
-        { stationNumber: 3, stationId: 'S3', stationName: 'Final QA & Pack', utilizationPct: 78, taskCount: 4, tasksLabel: 'Inspection & pack', machineState: 'processing', bufferCapacity: 6 },
-      ];
-
-  const anyLineDown = activeStations.every((s) => s.machineState === 'breakdown' || s.machineState === 'maintenance');
+  const activeStations: PlantStationInput[] = stations.slice(0, 6);
+  const hasStations = activeStations.length > 0;
+  const anyLineDown =
+    !hasStations ||
+    activeStations.every((s) => s.machineState === 'breakdown' || s.machineState === 'maintenance');
+  const anyLineActive =
+    hasStations &&
+    activeStations.some(
+      (s) => s.utilizationPct > 0 && s.machineState !== 'breakdown' && s.machineState !== 'maintenance'
+    );
   const avgThroughput =
-    activeStations.find((s) => typeof s.throughputPerHour === 'number' && s.throughputPerHour > 0)?.throughputPerHour ?? 45;
-  const conveyorSpeed = anyLineDown ? 0 : Math.max(0.03, Math.min(0.16, 0.04 + (avgThroughput / 60) * 0.05));
+    activeStations.find((s) => typeof s.throughputPerHour === 'number' && s.throughputPerHour > 0)?.throughputPerHour ??
+    (anyLineActive ? 24 : 0);
+  const conveyorSpeed =
+    !anyLineActive || anyLineDown || avgThroughput <= 0
+      ? 0
+      : Math.max(0.03, Math.min(0.16, 0.04 + (avgThroughput / 60) * 0.05));
 
   // Animated assembly workpieces moving along conveyor scaled to live throughput
-  const workGeo = bag.trackGeo(new THREE.BoxGeometry(0.36, 0.2, 0.36));
-  const capGeo = bag.trackGeo(new THREE.CylinderGeometry(0.09, 0.09, 0.09, 10));
-  for (let i = 0; i < 4; i++) {
-    const itemGrp = new THREE.Group();
-    const base = new THREE.Mesh(workGeo, p.accent);
-    base.position.y = 0.1;
-    base.castShadow = true;
-    itemGrp.add(base);
-    const cap = new THREE.Mesh(capGeo, p.chrome);
-    cap.position.y = 0.24;
-    itemGrp.add(cap);
-    itemGrp.position.set(-4.0 + i * 2.4, 0.71, 1.55);
-    root.add(itemGrp);
-    conveyorItems.push({ mesh: itemGrp, phase: i * 0.25, speed: conveyorSpeed });
+  if (hasStations) {
+    const workGeo = bag.trackGeo(new THREE.BoxGeometry(0.36, 0.2, 0.36));
+    const capGeo = bag.trackGeo(new THREE.CylinderGeometry(0.09, 0.09, 0.09, 10));
+    for (let i = 0; i < 4; i++) {
+      const itemGrp = new THREE.Group();
+      const base = new THREE.Mesh(workGeo, p.accent);
+      base.position.y = 0.1;
+      base.castShadow = true;
+      itemGrp.add(base);
+      const cap = new THREE.Mesh(capGeo, p.chrome);
+      cap.position.y = 0.24;
+      itemGrp.add(cap);
+      itemGrp.position.set(-4.0 + i * 2.4, 0.71, 1.55);
+      root.add(itemGrp);
+      conveyorItems.push({ mesh: itemGrp, phase: i * 0.25, speed: conveyorSpeed });
+    }
   }
 
   // Pre-build 6 machine status materials (consistent with VISUAL_INDICATOR_SPECS)
@@ -1392,7 +1415,7 @@ export function buildPlantFloorTwin(
     registerPart(root, stGrp, parts, {
       partId,
       label: `${st.stationId || `S${st.stationNumber}`} · ${st.stationName || `Workstation ${st.stationNumber}`} (${Math.round(st.utilizationPct)}%)`,
-      sku: 'ASM-CM200',
+      sku: activeWorkpieceSku,
       qtyPer: st.taskCount,
       role: `${stateLabel} · ${st.tasksLabel}${qInfo}`,
       explodeOffset: [0, 0.35, 0],
@@ -1531,45 +1554,47 @@ export function buildPlantFloorTwin(
 
   const transferLanesX = rackCenters;
   const carrierHandles: PlantTwinCarrierHandle[] = [];
-  transferLanesX.forEach((lx, laneIdx) => {
-    const rail = new THREE.Mesh(railGeo, railMat);
-    rail.position.set(lx, 0.009, -0.35);
-    root.add(rail);
+  if (displaySkus.length > 0 && hasStations) {
+    transferLanesX.forEach((lx, laneIdx) => {
+      const rail = new THREE.Mesh(railGeo, railMat);
+      rail.position.set(lx, 0.009, -0.35);
+      root.add(rail);
 
-    const matchedBin = cratePositions[laneIdx * 6] || cratePositions[laneIdx];
-    const toteMat =
-      matchedBin && (matchedBin.starved || matchedBin.status === 'critical' || matchedBin.status === 'out')
-        ? statusMats.critical
-        : matchedBin && matchedBin.status === 'reorder'
-          ? statusMats.reorder
-          : statusMats.ok;
+      const matchedBin = cratePositions[laneIdx * 6] || cratePositions[laneIdx];
+      const toteMat =
+        matchedBin && (matchedBin.starved || matchedBin.status === 'critical' || matchedBin.status === 'out')
+          ? statusMats.critical
+          : matchedBin && matchedBin.status === 'reorder'
+            ? statusMats.reorder
+            : statusMats.ok;
 
-    const carrierGrp = new THREE.Group();
-    const pallet = new THREE.Mesh(palletGeo, p.secondary);
-    pallet.position.y = 0.02;
-    carrierGrp.add(pallet);
-    const tote = new THREE.Mesh(toteGeo, toteMat);
-    tote.position.y = 0.12;
-    carrierGrp.add(tote);
+      const carrierGrp = new THREE.Group();
+      const pallet = new THREE.Mesh(palletGeo, p.secondary);
+      pallet.position.y = 0.02;
+      carrierGrp.add(pallet);
+      const tote = new THREE.Mesh(toteGeo, toteMat);
+      tote.position.y = 0.12;
+      carrierGrp.add(tote);
 
-    const start = new THREE.Vector3(lx, 0.01, -1.45);
-    const targetX = stationPositionsX[Math.min(laneIdx, Math.max(0, stationPositionsX.length - 1))] ?? lx;
-    const end = new THREE.Vector3(targetX, 0.01, 0.72);
-    const phase = (laneIdx * 0.31) % 1;
-    carrierGrp.position.copy(start).lerp(end, phase);
-    root.add(carrierGrp);
+      const start = new THREE.Vector3(lx, 0.01, -1.45);
+      const targetX = stationPositionsX[Math.min(laneIdx, Math.max(0, stationPositionsX.length - 1))] ?? lx;
+      const end = new THREE.Vector3(targetX, 0.01, 0.72);
+      const phase = (laneIdx * 0.31) % 1;
+      carrierGrp.position.copy(start).lerp(end, phase);
+      root.add(carrierGrp);
 
-    const carrierIdx = materialCarriers.length;
-    materialCarriers.push({
-      mesh: carrierGrp,
-      start,
-      end,
-      phase,
-      speed: anyLineDown ? 0 : Math.max(0.04, conveyorSpeed * 1.15),
-      stalled: Boolean(matchedBin?.status === 'out' || anyLineDown),
+      const carrierIdx = materialCarriers.length;
+      materialCarriers.push({
+        mesh: carrierGrp,
+        start,
+        end,
+        phase,
+        speed: anyLineDown ? 0 : Math.max(0.04, conveyorSpeed * 1.15),
+        stalled: Boolean(matchedBin?.status === 'out' || anyLineDown || !matchedBin),
+      });
+      carrierHandles.push({ toteMesh: tote, carrierIdx });
     });
-    carrierHandles.push({ toteMesh: tote, carrierIdx });
-  });
+  }
 
   const plantHandle: PlantTwinHandle = {
     topologyKey: computePlantTopologyKey(products, activeStations),
@@ -1601,26 +1626,33 @@ export function buildPlantFloorTwin(
 export function updatePlantFloorTwin(
   built: BuiltSceneRoot,
   products: PlantRackProductInput[],
-  stations: PlantStationInput[]
+  stations: PlantStationInput[],
+  options?: { assemblySku?: AssemblySku | string }
 ): boolean {
   const handle = built.plantHandle;
   if (!handle) return false;
 
-  const activeStations: PlantStationInput[] = stations.length
-    ? stations.slice(0, 6)
-    : [
-        { stationNumber: 1, stationId: 'S1', stationName: 'Subassembly', utilizationPct: 86, taskCount: 4, tasksLabel: 'Subassembly mount', machineState: 'processing', bufferCapacity: 6 },
-        { stationNumber: 2, stationId: 'S2', stationName: 'Drive & Tension', utilizationPct: 96, taskCount: 5, tasksLabel: 'Drive & belt tension', isBottleneck: true, machineState: 'bottleneck', bufferCapacity: 6, avgQueueLen: 3.8 },
-        { stationNumber: 3, stationId: 'S3', stationName: 'Final QA & Pack', utilizationPct: 78, taskCount: 4, tasksLabel: 'Inspection & pack', machineState: 'processing', bufferCapacity: 6 },
-      ];
-
+  const activeStations: PlantStationInput[] = stations.slice(0, 6);
   const nextKey = computePlantTopologyKey(products, activeStations);
   if (handle.topologyKey !== nextKey) return false;
 
-  const anyLineDown = activeStations.every((s) => s.machineState === 'breakdown' || s.machineState === 'maintenance');
+  const hasStations = activeStations.length > 0;
+  const anyLineDown =
+    !hasStations ||
+    activeStations.every((s) => s.machineState === 'breakdown' || s.machineState === 'maintenance');
+  const anyLineActive =
+    hasStations &&
+    activeStations.some(
+      (s) => s.utilizationPct > 0 && s.machineState !== 'breakdown' && s.machineState !== 'maintenance'
+    );
   const avgThroughput =
-    activeStations.find((s) => typeof s.throughputPerHour === 'number' && s.throughputPerHour > 0)?.throughputPerHour ?? 45;
-  const conveyorSpeed = anyLineDown ? 0 : Math.max(0.03, Math.min(0.16, 0.04 + (avgThroughput / 60) * 0.05));
+    activeStations.find((s) => typeof s.throughputPerHour === 'number' && s.throughputPerHour > 0)?.throughputPerHour ??
+    (anyLineActive ? 24 : 0);
+  const conveyorSpeed =
+    !anyLineActive || anyLineDown || avgThroughput <= 0
+      ? 0
+      : Math.max(0.03, Math.min(0.16, 0.04 + (avgThroughput / 60) * 0.05));
+  const activeWorkpieceSku = options?.assemblySku;
 
   built.conveyorItems.forEach((item) => {
     item.speed = conveyorSpeed;
@@ -1687,6 +1719,7 @@ export function updatePlantFloorTwin(
       ud.role = nextRole;
       ud.qtyPer = st.taskCount;
       ud.machineState = machineState;
+      if (activeWorkpieceSku) ud.sku = activeWorkpieceSku;
     });
   });
 
@@ -1757,20 +1790,632 @@ export function updatePlantFloorTwin(
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// 7. Project-Specific Workshop Bays & Plant Perimeter Machinery (Non-Interactive Backdrop)
+// ---------------------------------------------------------------------------
+
+interface PaletteRefs {
+  primary: THREE.MeshStandardMaterial;
+  secondary: THREE.MeshStandardMaterial;
+  accent: THREE.MeshStandardMaterial;
+  chrome: THREE.MeshStandardMaterial;
+  rubberPlain: THREE.MeshStandardMaterial;
+  brass: THREE.MeshStandardMaterial;
+  copper: THREE.MeshStandardMaterial;
+  glass: THREE.MeshStandardMaterial;
+  amberLiquid: THREE.MeshStandardMaterial;
+}
+
+function makeWorkshopMaterials(bag: SceneResourceBag, finishId: FinishPresetId) {
+  const f = FINISH_PRESETS[finishId] || FINISH_PRESETS.steel;
+  return {
+    concrete: bag.trackMat(new THREE.MeshStandardMaterial({ color: '#1a2234', roughness: 0.9, metalness: 0.06 })),
+    wallMat: bag.trackMat(new THREE.MeshStandardMaterial({ color: '#1e293b', roughness: 0.85, metalness: 0.12 })),
+    columnSteel: bag.trackMat(new THREE.MeshStandardMaterial({ color: '#2b3648', roughness: 0.65, metalness: 0.32 })),
+    machineBody: bag.trackMat(new THREE.MeshStandardMaterial({ color: '#334155', roughness: 0.56, metalness: 0.34 })),
+    machineLight: bag.trackMat(new THREE.MeshStandardMaterial({ color: '#64748b', roughness: 0.48, metalness: 0.4 })),
+    machineAccent: bag.trackMat(new THREE.MeshStandardMaterial({ color: f.accentHex, roughness: 0.44, metalness: 0.3 })),
+    safetyAmber: bag.trackMat(new THREE.MeshStandardMaterial({ color: '#d97706', roughness: 0.5, metalness: 0.18 })),
+    safetyRed: bag.trackMat(new THREE.MeshStandardMaterial({ color: '#b91c1c', roughness: 0.48, metalness: 0.2 })),
+    emeraldLed: bag.trackMat(new THREE.MeshStandardMaterial({ color: '#10b981', emissive: '#10b981', emissiveIntensity: 0.5, roughness: 0.3, metalness: 0.1 })),
+    amberLed: bag.trackMat(new THREE.MeshStandardMaterial({ color: '#f59e0b', emissive: '#f59e0b', emissiveIntensity: 0.55, roughness: 0.3, metalness: 0.1 })),
+    skyGlow: bag.trackMat(new THREE.MeshStandardMaterial({ color: '#cbd5e1', emissive: '#93c5fd', emissiveIntensity: 0.25, roughness: 0.25, metalness: 0.05 })),
+    granite: bag.trackMat(new THREE.MeshStandardMaterial({ color: '#0f172a', roughness: 0.22, metalness: 0.08 })),
+    castIron: bag.trackMat(new THREE.MeshStandardMaterial({ color: '#1e293b', roughness: 0.72, metalness: 0.42 })),
+    copperWire: bag.trackMat(new THREE.MeshStandardMaterial({ color: '#b45309', roughness: 0.32, metalness: 0.78 })),
+    steelChrome: bag.trackMat(new THREE.MeshStandardMaterial({ color: '#cbd5e1', roughness: 0.24, metalness: 0.82 })),
+    glassPane: bag.trackMat(new THREE.MeshStandardMaterial({ color: '#93c5fd', roughness: 0.16, metalness: 0.1, transparent: true, opacity: 0.34 })),
+  };
+}
+
+function addPlantBackgroundMachinery(
+  bag: SceneResourceBag,
+  p: PaletteRefs,
+  root: THREE.Group
+) {
+  const wm = makeWorkshopMaterials(bag, 'steel');
+  const APRON_Y = -0.14;
+
+  // Extended factory concrete apron surrounding the core epoxy slab (zero coplanar Z-fighting)
+  const apronSlab = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(19.2, 0.14, 13.8)), wm.concrete);
+  apronSlab.position.set(0, APRON_Y - 0.07, -0.4);
+  apronSlab.receiveShadow = true;
+  root.add(apronSlab);
+
+  // Rear structural hall backdrop wall & vertical I-beam portal columns (z = -5.6)
+  const rearWall = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(19.0, 4.1, 0.22)), wm.wallMat);
+  rearWall.position.set(0, APRON_Y + 2.05, -5.65);
+  rearWall.receiveShadow = true;
+  root.add(rearWall);
+
+  // Upper clerestory daylight ribbon
+  const clerestory = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(17.6, 0.55, 0.06)), wm.skyGlow);
+  clerestory.position.set(0, APRON_Y + 3.45, -5.51);
+  root.add(clerestory);
+
+  // Steel H-columns & overhead bridge crane runway rails
+  const colGeo = bag.trackGeo(new THREE.BoxGeometry(0.28, 4.35, 0.32));
+  const runwayGeo = bag.trackGeo(new THREE.BoxGeometry(0.22, 0.24, 9.6));
+  [-7.2, 7.2].forEach((cx) => {
+    [-4.8, -0.4, 3.8].forEach((cz) => {
+      const col = new THREE.Mesh(colGeo, wm.columnSteel);
+      col.position.set(cx, APRON_Y + 2.175, cz);
+      col.castShadow = true;
+      root.add(col);
+    });
+    const runway = new THREE.Mesh(runwayGeo, wm.safetyAmber);
+    runway.position.set(cx, 3.55, -0.5);
+    root.add(runway);
+  });
+
+  // Twin-girder overhead bridge crane + hoist trolley spanning aisle
+  const craneSpanZ = 0.05;
+  const girderGeo = bag.trackGeo(new THREE.BoxGeometry(14.6, 0.26, 0.18));
+  [-0.32, 0.32].forEach((dz) => {
+    const girder = new THREE.Mesh(girderGeo, wm.safetyAmber);
+    girder.position.set(0, 3.82, craneSpanZ + dz);
+    root.add(girder);
+  });
+  const trolley = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.95, 0.24, 0.92)), wm.castIron);
+  trolley.position.set(-1.35, 4.02, craneSpanZ);
+  root.add(trolley);
+  const hoistCable = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.02, 0.02, 1.05, 8)), wm.steelChrome);
+  hoistCable.position.set(-1.35, 3.35, craneSpanZ);
+  root.add(hoistCable);
+  const hookBlock = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.26, 0.2, 0.22)), wm.safetyAmber);
+  hookBlock.position.set(-1.35, 2.78, craneSpanZ);
+  root.add(hookBlock);
+
+  // 1. Left-Flank CNC Vertical Machining Center (VMC-400)
+  const vmc = new THREE.Group();
+  vmc.position.set(-7.95, APRON_Y, -1.7);
+  vmc.rotation.y = Math.PI / 2;
+  const vmcBase = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.1, 1.85, 1.45)), wm.machineBody);
+  vmcBase.position.y = 0.925;
+  vmcBase.castShadow = true;
+  vmc.add(vmcBase);
+  const vmcHood = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.14, 0.34, 1.48)), wm.machineLight);
+  vmcHood.position.y = 2.02;
+  vmc.add(vmcHood);
+  const vmcWindow = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.92, 0.78, 0.05)), wm.glassPane);
+  vmcWindow.position.set(-0.15, 1.28, 0.73);
+  vmc.add(vmcWindow);
+  const vmcPanel = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.46, 0.85, 0.16)), wm.castIron);
+  vmcPanel.position.set(0.75, 1.25, 0.76);
+  vmc.add(vmcPanel);
+  const vmcBeacon = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.05, 0.05, 0.22, 10)), wm.emeraldLed);
+  vmcBeacon.position.set(0.75, 2.3, 0.45);
+  vmc.add(vmcBeacon);
+  root.add(vmc);
+
+  // 2. Left-Front Hydraulic Stamping Press
+  const press = new THREE.Group();
+  press.position.set(-7.95, APRON_Y, 1.75);
+  press.rotation.y = Math.PI / 2;
+  const pressBase = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.75, 0.65, 1.25)), wm.castIron);
+  pressBase.position.y = 0.325;
+  press.add(pressBase);
+  [-0.65, 0.65].forEach((px) => {
+    const upright = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.28, 1.95, 0.95)), wm.machineBody);
+    upright.position.set(px, 1.62, 0);
+    upright.castShadow = true;
+    press.add(upright);
+  });
+  const pressCrown = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.85, 0.42, 1.1)), wm.safetyAmber);
+  pressCrown.position.y = 2.68;
+  press.add(pressCrown);
+  const ramCyl = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.18, 0.18, 0.65, 14)), wm.steelChrome);
+  ramCyl.position.y = 2.05;
+  press.add(ramCyl);
+  root.add(press);
+
+  // 3. Right-Flank Robotic Palletizer Cell
+  const robot = new THREE.Group();
+  robot.position.set(7.95, APRON_Y, -1.4);
+  const robPedestal = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.42, 0.52, 0.68, 14)), wm.castIron);
+  robPedestal.position.y = 0.34;
+  robot.add(robPedestal);
+  const robShoulder = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.42, 0.95, 0.38)), wm.safetyAmber);
+  robShoulder.position.set(0, 1.12, 0);
+  robShoulder.rotation.z = 0.25;
+  robShoulder.castShadow = true;
+  robot.add(robShoulder);
+  const robForearm = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.15, 0.24, 0.26)), wm.safetyAmber);
+  robForearm.position.set(-0.55, 1.62, 0);
+  robForearm.rotation.z = -0.18;
+  robot.add(robForearm);
+  const robPallet = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.2, 0.14, 1.2)), wm.machineLight);
+  robPallet.position.set(-1.15, 0.07, 0.55);
+  robot.add(robPallet);
+  const robBoxes = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.92, 0.68, 0.92)), p.brass);
+  robBoxes.position.set(-1.15, 0.48, 0.55);
+  robot.add(robBoxes);
+  root.add(robot);
+
+  // 4. Right-Front CMM Metrology & Packing Kiosk
+  const cmm = new THREE.Group();
+  cmm.position.set(7.95, APRON_Y, 1.75);
+  cmm.rotation.y = -Math.PI / 2;
+  const cmmTable = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.8, 0.88, 1.28)), wm.machineBody);
+  cmmTable.position.y = 0.44;
+  cmm.add(cmmTable);
+  const cmmGranite = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.65, 0.16, 1.15)), wm.granite);
+  cmmGranite.position.y = 0.96;
+  cmm.add(cmmGranite);
+  const cmmBridge = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.24, 1.08, 1.14)), wm.machineLight);
+  cmmBridge.position.set(0.15, 1.56, 0);
+  cmm.add(cmmBridge);
+  const cmmProbe = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.03, 0.02, 0.52, 10)), wm.steelChrome);
+  cmmProbe.position.set(0.15, 1.38, 0);
+  cmm.add(cmmProbe);
+  root.add(cmm);
+
+  // 5. Rear Utility Skid: Air Receiver Tank + HV Switchgear Cabinet (z = -4.65)
+  const airSkid = new THREE.Group();
+  airSkid.position.set(-4.3, APRON_Y, -4.65);
+  const tank = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.42, 0.42, 1.95, 16)), wm.machineAccent);
+  tank.position.set(0, 1.08, 0);
+  tank.castShadow = true;
+  airSkid.add(tank);
+  const compBlock = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.95, 0.9, 0.85)), wm.machineBody);
+  compBlock.position.set(0.95, 0.45, 0);
+  airSkid.add(compBlock);
+  root.add(airSkid);
+
+  const switchgear = new THREE.Group();
+  switchgear.position.set(4.3, APRON_Y, -4.65);
+  const cab = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.2, 2.05, 0.78)), wm.machineLight);
+  cab.position.y = 1.025;
+  cab.castShadow = true;
+  switchgear.add(cab);
+  const doorLine = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.05, 0.08, 0.04)), wm.safetyAmber);
+  doorLine.position.set(0, 1.85, 0.4);
+  switchgear.add(doorLine);
+  root.add(switchgear);
+}
+
+function buildProjectWorkshopEnvironment(
+  bag: SceneResourceBag,
+  sku: AssemblySku,
+  finishId: FinishPresetId
+): THREE.Group {
+  const env = new THREE.Group();
+  const wm = makeWorkshopMaterials(bag, finishId);
+  const FLOOR_Y = -0.06;
+
+  // 1. Tiled Epoxy Workshop Bay Floor (top strictly at y = -0.06)
+  const floorTex = bag.trackTex(createFloorGridTexture());
+  const floorMat = bag.trackMat(
+    new THREE.MeshStandardMaterial({
+      map: floorTex,
+      roughness: 0.82,
+      metalness: 0.12,
+    })
+  );
+  const floor = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(15.6, 0.18, 12.8)), floorMat);
+  floor.position.set(0, FLOOR_Y - 0.09, -0.6);
+  floor.receiveShadow = true;
+  env.add(floor);
+
+  // Central Machined Inspection Turntable Plinth (top at y = -0.002 so hero assembly at y = 0 sits flush)
+  const plinthOuter = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(1.94, 2.04, 0.042, 48)), wm.castIron);
+  plinthOuter.position.set(0, FLOOR_Y + 0.021, 0);
+  plinthOuter.receiveShadow = true;
+  env.add(plinthOuter);
+
+  const plinthPlate = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(1.8, 1.82, 0.058, 48)), wm.machineBody);
+  plinthPlate.position.set(0, -0.031, 0);
+  plinthPlate.receiveShadow = true;
+  env.add(plinthPlate);
+
+  // Safety hazard curb strips framing the center inspection bay
+  const hStripGeo = bag.trackGeo(new THREE.BoxGeometry(4.6, 0.014, 0.09));
+  const vStripGeo = bag.trackGeo(new THREE.BoxGeometry(0.09, 0.014, 4.6));
+  [-2.32, 2.32].forEach((pos) => {
+    const hs = new THREE.Mesh(hStripGeo, wm.safetyAmber);
+    hs.position.set(0, FLOOR_Y + 0.007, pos);
+    env.add(hs);
+    const vs = new THREE.Mesh(vStripGeo, wm.safetyAmber);
+    vs.position.set(pos, FLOOR_Y + 0.007, 0);
+    env.add(vs);
+  });
+
+  // 2. Rear Architectural Bay Wall, Structural I-Beams & Overhead High-Bay Light Truss
+  const rearWall = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(15.6, 4.2, 0.22)), wm.wallMat);
+  rearWall.position.set(0, FLOOR_Y + 2.1, -5.15);
+  rearWall.receiveShadow = true;
+  env.add(rearWall);
+
+  const wainscot = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(15.4, 0.95, 0.05)), wm.concrete);
+  wainscot.position.set(0, FLOOR_Y + 0.475, -5.02);
+  env.add(wainscot);
+
+  const clerestory = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(14.0, 0.52, 0.06)), wm.skyGlow);
+  clerestory.position.set(0, FLOOR_Y + 3.45, -5.01);
+  env.add(clerestory);
+
+  const colGeo = bag.trackGeo(new THREE.BoxGeometry(0.24, 4.3, 0.28));
+  [-5.8, -2.9, 0, 2.9, 5.8].forEach((cx) => {
+    const col = new THREE.Mesh(colGeo, wm.columnSteel);
+    col.position.set(cx, FLOOR_Y + 2.15, -4.92);
+    env.add(col);
+  });
+
+  // Overhead rear gantry light bar (positioned at z = -3.6 so top camera stays clear)
+  const truss = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(11.8, 0.16, 0.18)), wm.columnSteel);
+  truss.position.set(0, 3.85, -3.6);
+  env.add(truss);
+  [-3.2, 0, 3.2].forEach((lx) => {
+    const lamp = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.75, 0.08, 0.24)), wm.skyGlow);
+    lamp.position.set(lx, 3.74, -3.6);
+    env.add(lamp);
+  });
+
+  // 3. Project-Matched Background Machine Cells (positioned in rear/flank horseshoe, z <= -0.3)
+  if (sku === 'ASM-CM200') {
+    // Roll-Forming Steel Channel Mill (Left Rear)
+    const mill = new THREE.Group();
+    mill.position.set(-3.9, FLOOR_Y, -2.1);
+    mill.rotation.y = Math.PI / 5;
+    const millBed = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.6, 0.72, 0.92)), wm.machineBody);
+    millBed.position.y = 0.36;
+    millBed.castShadow = true;
+    mill.add(millBed);
+    const standGeo = bag.trackGeo(new THREE.BoxGeometry(0.18, 0.62, 0.86));
+    const rollGeo = bag.trackGeo(new THREE.CylinderGeometry(0.11, 0.11, 0.64, 12));
+    rollGeo.rotateX(Math.PI / 2);
+    [-0.95, -0.45, 0.05, 0.55, 1.0].forEach((sx) => {
+      const stand = new THREE.Mesh(standGeo, wm.castIron);
+      stand.position.set(sx, 1.02, 0);
+      mill.add(stand);
+      const roll = new THREE.Mesh(rollGeo, wm.steelChrome);
+      roll.position.set(sx, 0.95, 0);
+      mill.add(roll);
+    });
+    const decoiler = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.46, 0.46, 0.44, 18)), wm.machineAccent);
+    decoiler.rotation.x = Math.PI / 2;
+    decoiler.position.set(-1.68, 0.85, 0);
+    mill.add(decoiler);
+    env.add(mill);
+
+    // Hydraulic Sheet-Metal Shear & Brake (Center Rear)
+    const shear = new THREE.Group();
+    shear.position.set(-0.2, FLOOR_Y, -3.55);
+    const sBed = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.9, 0.85, 1.1)), wm.castIron);
+    sBed.position.y = 0.425;
+    shear.add(sBed);
+    [-1.25, 1.25].forEach((ux) => {
+      const col = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.32, 1.55, 0.95)), wm.machineBody);
+      col.position.set(ux, 1.62, 0);
+      col.castShadow = true;
+      shear.add(col);
+    });
+    const sBeam = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.95, 0.44, 0.68)), wm.safetyAmber);
+    sBeam.position.set(0, 2.15, 0.06);
+    shear.add(sBeam);
+    const lightCurtain = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.06, 0.88, 0.06)), wm.amberLed);
+    lightCurtain.position.set(1.05, 1.25, 0.58);
+    shear.add(lightCurtain);
+    env.add(shear);
+
+    // Cantilever Extruded Bar Stock Rack + Welding Cart (Right Rear)
+    const rack = new THREE.Group();
+    rack.position.set(3.85, FLOOR_Y, -2.35);
+    rack.rotation.y = -Math.PI / 6;
+    [-0.95, 0.95].forEach((rx) => {
+      const upright = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.14, 2.1, 0.72)), wm.columnSteel);
+      upright.position.set(rx, 1.05, 0);
+      rack.add(upright);
+    });
+    [0.48, 1.15, 1.78].forEach((ay) => {
+      const barBundle = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.65, 0.14, 0.34)), wm.machineLight);
+      barBundle.position.set(0, ay + 0.08, 0.15);
+      rack.add(barBundle);
+    });
+    env.add(rack);
+
+    const welder = new THREE.Group();
+    welder.position.set(3.95, FLOOR_Y, -0.35);
+    welder.rotation.y = -Math.PI / 3;
+    const wBox = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.72, 0.84, 0.56)), wm.machineAccent);
+    wBox.position.y = 0.42;
+    welder.add(wBox);
+    const gasTank = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.12, 0.12, 1.35, 12)), wm.emeraldLed);
+    gasTank.position.set(0.18, 0.68, -0.38);
+    welder.add(gasTank);
+    env.add(welder);
+  } else if (sku === 'ASM-PA100') {
+    // CNC Precision Turning Lathe (Left Rear)
+    const lathe = new THREE.Group();
+    lathe.position.set(-3.75, FLOOR_Y, -2.15);
+    lathe.rotation.y = Math.PI / 5;
+    const lBed = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.6, 0.92, 1.15)), wm.machineBody);
+    lBed.position.y = 0.46;
+    lBed.castShadow = true;
+    lathe.add(lBed);
+    const headstock = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.95, 0.98, 1.05)), wm.machineLight);
+    headstock.position.set(-0.78, 1.4, 0);
+    lathe.add(headstock);
+    const enclosure = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.48, 0.92, 0.98)), wm.castIron);
+    enclosure.position.set(0.45, 1.38, 0);
+    lathe.add(enclosure);
+    const latheWin = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.86, 0.56, 0.05)), wm.glassPane);
+    latheWin.position.set(0.42, 1.4, 0.5);
+    lathe.add(latheWin);
+    const pendant = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.42, 0.62, 0.14)), wm.machineAccent);
+    pendant.position.set(1.22, 1.38, 0.45);
+    lathe.add(pendant);
+    env.add(lathe);
+
+    // Hydraulic Flow & Pressure Test Stand (Center Rear)
+    const testStand = new THREE.Group();
+    testStand.position.set(0.05, FLOOR_Y, -3.45);
+    const bench = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.7, 0.96, 1.08)), wm.machineBody);
+    bench.position.y = 0.48;
+    bench.castShadow = true;
+    testStand.add(bench);
+    const backboard = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.55, 1.18, 0.18)), wm.machineLight);
+    backboard.position.set(0, 1.54, -0.38);
+    testStand.add(backboard);
+    const reservoir = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.28, 0.28, 0.92, 16)), wm.glassPane);
+    reservoir.position.set(-0.78, 1.42, 0.12);
+    testStand.add(reservoir);
+    const headerPipe = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.045, 0.045, 2.05, 10)), wm.copperWire);
+    headerPipe.rotation.z = Math.PI / 2;
+    headerPipe.position.set(0.1, 1.88, -0.18);
+    testStand.add(headerPipe);
+    [-0.15, 0.35, 0.85].forEach((gx) => {
+      const dial = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.14, 0.14, 0.06, 16)), wm.steelChrome);
+      dial.rotation.x = Math.PI / 2;
+      dial.position.set(gx, 1.55, -0.26);
+      testStand.add(dial);
+    });
+    env.add(testStand);
+
+    // Copper Stator Winding Rig & ISO Coolant Drum Skid (Right Rear)
+    const winder = new THREE.Group();
+    winder.position.set(3.75, FLOOR_Y, -2.0);
+    winder.rotation.y = -Math.PI / 5;
+    const wBench = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.7, 0.88, 0.92)), wm.castIron);
+    wBench.position.y = 0.44;
+    winder.add(wBench);
+    [-0.4, 0.38].forEach((sx) => {
+      const spool = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.24, 0.24, 0.36, 16)), wm.copperWire);
+      spool.rotation.z = Math.PI / 2;
+      spool.position.set(sx, 1.18, 0);
+      winder.add(spool);
+    });
+    env.add(winder);
+
+    const drum = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.32, 0.32, 0.92, 16)), wm.safetyAmber);
+    drum.position.set(3.95, FLOOR_Y + 0.46, -0.45);
+    env.add(drum);
+  } else if (sku === 'ASM-GS350') {
+    // Vertical CNC Gear Hobbing Mill (Left Rear)
+    const hobber = new THREE.Group();
+    hobber.position.set(-3.75, FLOOR_Y, -2.15);
+    hobber.rotation.y = Math.PI / 5;
+    const hBase = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.85, 0.62, 1.45)), wm.castIron);
+    hBase.position.y = 0.31;
+    hobber.add(hBase);
+    const hColumn = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.82, 1.95, 0.85)), wm.machineBody);
+    hColumn.position.set(-0.42, 1.58, 0);
+    hColumn.castShadow = true;
+    hobber.add(hColumn);
+    const hHead = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.95, 0.56, 0.72)), wm.machineLight);
+    hHead.position.set(0.22, 1.95, 0);
+    hobber.add(hHead);
+    const rotaryTable = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.42, 0.48, 0.32, 18)), wm.steelChrome);
+    rotaryTable.position.set(0.45, 0.78, 0);
+    hobber.add(rotaryTable);
+    env.add(hobber);
+
+    // Granite Bridge CMM Metrology Machine (Center Rear)
+    const cmm = new THREE.Group();
+    cmm.position.set(0.0, FLOOR_Y, -3.45);
+    const cmmStand = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.3, 0.78, 1.45)), wm.machineBody);
+    cmmStand.position.y = 0.39;
+    cmm.add(cmmStand);
+    const granite = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.25, 0.2, 1.4)), wm.granite);
+    granite.position.y = 0.88;
+    cmm.add(granite);
+    const bridge = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.28, 1.15, 1.38)), wm.machineLight);
+    bridge.position.set(-0.25, 1.55, 0);
+    bridge.castShadow = true;
+    cmm.add(bridge);
+    const probe = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.04, 0.02, 0.58, 10)), wm.steelChrome);
+    probe.position.set(-0.25, 1.36, 0.05);
+    cmm.add(probe);
+    env.add(cmm);
+
+    // Torque Dynamometer Test Bed (Right Rear)
+    const dyno = new THREE.Group();
+    dyno.position.set(3.75, FLOOR_Y, -1.95);
+    dyno.rotation.y = -Math.PI / 5;
+    const dBed = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.15, 0.68, 1.05)), wm.castIron);
+    dBed.position.y = 0.34;
+    dyno.add(dBed);
+    const brakeDrum = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.36, 0.36, 0.68, 16)), wm.machineAccent);
+    brakeDrum.rotation.z = Math.PI / 2;
+    brakeDrum.position.set(-0.48, 1.02, 0);
+    dyno.add(brakeDrum);
+    const loadCell = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.68, 0.62, 0.68)), wm.machineLight);
+    loadCell.position.set(0.55, 0.99, 0);
+    dyno.add(loadCell);
+    const towerLed = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.05, 0.05, 0.3, 10)), wm.emeraldLed);
+    towerLed.position.set(0.85, 1.52, -0.28);
+    dyno.add(towerLed);
+    env.add(dyno);
+  } else if (sku === 'ASM-CP120') {
+    // Sheet-Metal Enclosure Bender Press (Left Rear)
+    const bender = new THREE.Group();
+    bender.position.set(-3.75, FLOOR_Y, -2.15);
+    bender.rotation.y = Math.PI / 5;
+    const bBody = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.35, 1.95, 0.95)), wm.machineBody);
+    bBody.position.y = 0.975;
+    bBody.castShadow = true;
+    bender.add(bBody);
+    const dieBeam = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.4, 0.32, 0.42)), wm.safetyAmber);
+    dieBeam.position.set(0, 1.38, 0.46);
+    bender.add(dieBeam);
+    env.add(bender);
+
+    // Automated Hi-Pot & PLC Burn-In Test Rack (Center Rear)
+    const burnIn = new THREE.Group();
+    burnIn.position.set(0, FLOOR_Y, -3.55);
+    const rackBody = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.75, 2.25, 0.92)), wm.castIron);
+    rackBody.position.y = 1.125;
+    rackBody.castShadow = true;
+    burnIn.add(rackBody);
+    [-0.68, 0.68].forEach((bx) => {
+      const bay = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.12, 1.72, 0.06)), wm.machineBody);
+      bay.position.set(bx, 1.15, 0.47);
+      burnIn.add(bay);
+      const ledStrip = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.85, 0.09, 0.04)), wm.emeraldLed);
+      ledStrip.position.set(bx, 1.78, 0.51);
+      burnIn.add(ledStrip);
+    });
+    const beacon = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.06, 0.06, 0.24, 10)), wm.amberLed);
+    beacon.position.set(1.12, 2.38, 0.25);
+    burnIn.add(beacon);
+    env.add(burnIn);
+
+    // ESD Wiring Harness & Copper Busbar Bench (Right Rear)
+    const bench = new THREE.Group();
+    bench.position.set(3.75, FLOOR_Y, -1.95);
+    bench.rotation.y = -Math.PI / 5;
+    const top = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.15, 0.9, 0.98)), wm.machineLight);
+    top.position.y = 0.45;
+    bench.add(top);
+    const gantry = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(2.05, 0.95, 0.14)), wm.columnSteel);
+    gantry.position.set(0, 1.38, -0.36);
+    bench.add(gantry);
+    [-0.55, 0, 0.55].forEach((sx, idx) => {
+      const spool = new THREE.Mesh(
+        bag.trackGeo(new THREE.CylinderGeometry(0.15, 0.15, 0.22, 12)),
+        idx === 1 ? wm.copperWire : wm.machineAccent
+      );
+      spool.rotation.z = Math.PI / 2;
+      spool.position.set(sx, 1.48, -0.22);
+      bench.add(spool);
+    });
+    env.add(bench);
+  } else {
+    // KIT-MK5: Vertical MRO Parts Carousel, Hydraulic Bearing Press & Ultrasonic Cleaner / Lube Cart
+    const carousel = new THREE.Group();
+    carousel.position.set(-3.75, FLOOR_Y, -2.15);
+    carousel.rotation.y = Math.PI / 5;
+    const tower = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.95, 2.65, 1.15)), wm.machineBody);
+    tower.position.y = 1.325;
+    tower.castShadow = true;
+    carousel.add(tower);
+    const bayOpening = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.45, 0.68, 0.18)), wm.castIron);
+    bayOpening.position.set(0, 1.05, 0.56);
+    carousel.add(bayOpening);
+    const pickBar = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.38, 0.06, 0.06)), wm.emeraldLed);
+    pickBar.position.set(0, 1.42, 0.62);
+    carousel.add(pickBar);
+    env.add(carousel);
+
+    // H-Frame Hydraulic Bearing Press (Center Rear)
+    const hPress = new THREE.Group();
+    hPress.position.set(0, FLOOR_Y, -3.45);
+    [-0.68, 0.68].forEach((px) => {
+      const post = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(0.18, 2.25, 0.34)), wm.safetyRed);
+      post.position.set(px, 1.125, 0);
+      post.castShadow = true;
+      hPress.add(post);
+    });
+    const crown = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.65, 0.28, 0.38)), wm.castIron);
+    crown.position.y = 2.15;
+    hPress.add(crown);
+    const bolster = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.52, 0.16, 0.42)), wm.machineLight);
+    bolster.position.y = 0.98;
+    hPress.add(bolster);
+    const jack = new THREE.Mesh(bag.trackGeo(new THREE.CylinderGeometry(0.11, 0.11, 0.58, 12)), wm.steelChrome);
+    jack.position.y = 1.72;
+    hPress.add(jack);
+    env.add(hPress);
+
+    // Ultrasonic Parts Washer & ISO-68 Oil Dispensing Drums (Right Rear)
+    const washer = new THREE.Group();
+    washer.position.set(3.75, FLOOR_Y, -1.95);
+    washer.rotation.y = -Math.PI / 5;
+    const tank = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.45, 0.96, 0.92)), wm.steelChrome);
+    tank.position.y = 0.48;
+    washer.add(tank);
+    const lid = new THREE.Mesh(bag.trackGeo(new THREE.BoxGeometry(1.42, 0.08, 0.85)), wm.machineLight);
+    lid.position.set(0, 1.32, -0.35);
+    lid.rotation.x = -Math.PI / 3;
+    washer.add(lid);
+    env.add(washer);
+
+    [-0.38, 0.38].forEach((dz, i) => {
+      const barrel = new THREE.Mesh(
+        bag.trackGeo(new THREE.CylinderGeometry(0.28, 0.28, 0.88, 16)),
+        i === 0 ? wm.safetyAmber : wm.machineAccent
+      );
+      barrel.position.set(3.95, FLOOR_Y + 0.44, -0.35 + dz);
+      env.add(barrel);
+    });
+  }
+
+  return env;
+}
+
 export function buildAssembly3D(sku: AssemblySku, finishId: FinishPresetId): BuiltSceneRoot {
   const bag = new SceneResourceBag();
+  let inner: BuiltSceneRoot;
   switch (sku) {
     case 'ASM-CM200':
-      return buildConveyorModule(bag, finishId);
+      inner = buildConveyorModule(bag, finishId);
+      break;
     case 'ASM-PA100':
-      return buildPumpAssembly(bag, finishId);
+      inner = buildPumpAssembly(bag, finishId);
+      break;
     case 'ASM-GS350':
-      return buildGearboxSet(bag, finishId);
+      inner = buildGearboxSet(bag, finishId);
+      break;
     case 'ASM-CP120':
-      return buildControlPanel(bag, finishId);
+      inner = buildControlPanel(bag, finishId);
+      break;
     case 'KIT-MK5':
-      return buildMaintenanceKit(bag, finishId);
+      inner = buildMaintenanceKit(bag, finishId);
+      break;
     default:
-      return buildConveyorModule(bag, finishId);
+      inner = buildConveyorModule(bag, finishId);
+      break;
   }
+
+  const outerRoot = new THREE.Group();
+  outerRoot.add(buildProjectWorkshopEnvironment(bag, sku, finishId));
+  outerRoot.add(inner.root);
+
+  return {
+    root: outerRoot,
+    parts: inner.parts,
+    conveyorItems: inner.conveyorItems,
+    dispose: () => bag.dispose(),
+  };
 }
+
